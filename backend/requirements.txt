@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic
+ecdsa
+cryptography
+sqlalchemy
+psutil
+rich
+passlib[bcrypt]
+scapy
+pyfiglet

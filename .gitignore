@@ -1,0 +1,43 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# ── Database (never commit — contains hashed credentials) ─────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Logs (may contain sensitive runtime data) ─────────────────────────────────
+backend/logs/access.log
+
+# ── Compiled / archive artifacts ─────────────────────────────────────────────
+backend.zip
+*.zip
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Flutter build outputs ─────────────────────────────────────────────────────
+aeroguard_app/build/
+aeroguard_app/.dart_tool/
+aeroguard_app/.flutter-plugins
+aeroguard_app/.flutter-plugins-dependencies
+aeroguard_app/.pub-cache/
+aeroguard_app/.pub/
+aeroguard_app/coverage/

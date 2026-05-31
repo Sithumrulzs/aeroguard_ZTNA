@@ -1,0 +1,4 @@
+{
+  "GATEWAY_IP":   "your-domain.com",
+  "GATEWAY_PORT": "443"
+}
