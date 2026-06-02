@@ -41,7 +41,7 @@ class EnclaveService {
 
       // Heavy crypto in background isolate — UI thread stays free
       final keys = await compute(_generateEcdsaKeyPair, null);
-      final deviceId = _formatDeviceId(username);
+      final deviceId = getDeviceIdForUser(username);
 
       await _vault.write(key: _privateKeyName, value: keys[0]);
       await _vault.write(key: _publicKeyName, value: keys[1]);
@@ -64,12 +64,14 @@ class EnclaveService {
     return compute(_signPayloadIsolate, {'hexKey': hexKey, 'payload': payload});
   }
 
-  static String _formatDeviceId(String username) {
-    final sanitized = username.toLowerCase().replaceAll(
-      RegExp(r'[^a-z0-9_]'),
-      '_',
-    );
-    return 'admin_$sanitized';
+  static String getDeviceIdForUser(String username) {
+    switch (username) {
+      case 'sithum.it': return 'admin_kss_jayamanna';
+      case 'dulshi.it': return 'admin_ds_kalansooriya';
+      case 'yasas.it':  return 'admin_syl_geeganage';
+      case 'dulen.it':  return 'admin_ads_abayarathna';
+      default:          return 'admin_admin';
+    }
   }
 
   static Future<String> getDeviceId() async {

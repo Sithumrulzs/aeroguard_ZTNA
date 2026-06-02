@@ -2,8 +2,20 @@ import 'package:flutter/foundation.dart';
 import 'package:local_auth/local_auth.dart';
 
 class BiometricService {
-  // Initialize the native authentication bridge
   static final LocalAuthentication _auth = LocalAuthentication();
+
+  /// Returns true if the device has a biometric sensor AND has enrolled fingers.
+  static Future<bool> isAvailable() async {
+    try {
+      final bool canCheck = await _auth.canCheckBiometrics;
+      if (!canCheck) return false;
+      final List<BiometricType> available = await _auth.getAvailableBiometrics();
+      return available.isNotEmpty;
+    } catch (e) {
+      debugPrint('[-] Biometric availability check failed: $e');
+      return false;
+    }
+  }
 
   static Future<bool> authenticateAdmin() async {
     try {

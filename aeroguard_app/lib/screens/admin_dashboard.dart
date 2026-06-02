@@ -445,6 +445,19 @@ class _AccessTabState extends State<_AccessTab>
   }
 
   Future<void> _handleKnock() async {
+    // If gateway is already open, this tap terminates the session
+    if (_knockStatus == _KnockStatus.success) {
+      setState(() {
+        _knockStatus = _KnockStatus.idle;
+        _tunnelLabel = 'Gateway closed — tunnel terminated';
+      });
+      await Future.delayed(const Duration(seconds: 2));
+      if (mounted) {
+        setState(() => _tunnelLabel = 'Standby — Awaiting knock');
+      }
+      return;
+    }
+
     setState(() {
       _knockStatus = _KnockStatus.knocking;
       _tunnelLabel = 'Establishing secure tunnel...';
@@ -454,19 +467,24 @@ class _AccessTabState extends State<_AccessTab>
     final success = await NetworkService.sendAuthorizationKnock(username);
     if (!mounted) return;
 
-    setState(() {
-      _knockStatus = success ? _KnockStatus.success : _KnockStatus.failed;
-      _tunnelLabel = success
-          ? 'Tunnel active — Connection secured'
-          : 'Connection refused — Check gateway';
-    });
-
-    await Future.delayed(const Duration(seconds: 3));
-    if (mounted) {
+    if (success) {
+      // Stay green — gateway remains open until admin taps to terminate
       setState(() {
-        _knockStatus = _KnockStatus.idle;
-        _tunnelLabel = 'Standby — Awaiting knock';
+        _knockStatus = _KnockStatus.success;
+        _tunnelLabel = 'Tunnel active — Connection secured';
       });
+    } else {
+      setState(() {
+        _knockStatus = _KnockStatus.failed;
+        _tunnelLabel = 'Connection refused — Check gateway';
+      });
+      await Future.delayed(const Duration(seconds: 3));
+      if (mounted) {
+        setState(() {
+          _knockStatus = _KnockStatus.idle;
+          _tunnelLabel = 'Standby — Awaiting knock';
+        });
+      }
     }
   }
 
@@ -483,10 +501,10 @@ class _AccessTabState extends State<_AccessTab>
   };
 
   String get _knockLabel => switch (_knockStatus) {
-    _KnockStatus.idle => 'TAP TO INITIATE KNOCK',
+    _KnockStatus.idle    => 'TAP TO INITIATE KNOCK',
     _KnockStatus.knocking => 'ESTABLISHING TUNNEL...',
-    _KnockStatus.success => 'GATEWAY OPEN',
-    _KnockStatus.failed => 'ACCESS DENIED',
+    _KnockStatus.success => 'GATEWAY ACTIVE  ·  TAP TO CLOSE',
+    _KnockStatus.failed  => 'ACCESS DENIED',
   };
 
   @override

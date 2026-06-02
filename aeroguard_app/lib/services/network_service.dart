@@ -1,25 +1,35 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import '../config/environment_config.dart';
+import '../config/api_constants.dart';
 import 'enclave_service.dart';
 
 class NetworkService {
-  static final Uri knockUri = Uri.parse(EnvironmentConfig.knockEndpoint);
+  static final Uri knockUri = Uri.parse(ApiConstants.knockEndpoint);
 
   /// Executes the Zero Trust network knock.
   /// The gateway has a 30-second anti-replay window; the app enforces a
   /// 10-second connection timeout so it fails fast on unreachable hosts.
   static Future<bool> sendAuthorizationKnock(String username) async {
-    debugPrint('[*] Initiating Zero Trust Knock → ${knockUri.toString()}');
+    // ── DIAGNOSTIC ───────────────────────────────────────────────────────────
+    debugPrint('🚨 [DIAGNOSTIC] App is firing packet to: ${knockUri.toString()}');
+    debugPrint('🚨 [DIAGNOSTIC] Gateway IP   : ${ApiConstants.gatewayIp}');
+    debugPrint('🚨 [DIAGNOSTIC] Gateway Port : ${ApiConstants.gatewayPort}');
+    debugPrint('🚨 [DIAGNOSTIC] Username     : $username');
+    // ─────────────────────────────────────────────────────────────────────────
 
     final Map<String, dynamic>? payload =
         await EnclaveService.generateZeroTrustPayload(username);
 
     if (payload == null) {
+      debugPrint('🚨 [DIAGNOSTIC] Enclave payload is NULL — device not provisioned yet.');
       debugPrint('[-] Aborting: enclave payload generation failed.');
       return false;
     }
+
+    debugPrint('🚨 [DIAGNOSTIC] Device ID  : ${payload['device_id']}');
+    debugPrint('🚨 [DIAGNOSTIC] Timestamp  : ${payload['timestamp']}');
+    debugPrint('🚨 [DIAGNOSTIC] Signature  : ${(payload['signature'] as String).substring(0, 16)}...');
 
     // FastAPI TelemetryPayload requires a sibling 'telemetry' dict field.
     final body = <String, dynamic>{
@@ -28,6 +38,7 @@ class NetworkService {
     };
 
     try {
+      debugPrint('🚨 [DIAGNOSTIC] Sending HTTP POST now...');
       final response = await http
           .post(
             knockUri,
@@ -38,8 +49,11 @@ class NetworkService {
             body: jsonEncode(body),
           )
           .timeout(
-            Duration(seconds: EnvironmentConfig.connectionTimeoutSeconds),
+            Duration(seconds: ApiConstants.connectionTimeoutSeconds),
           );
+
+      debugPrint('🚨 [DIAGNOSTIC] Response status : ${response.statusCode}');
+      debugPrint('🚨 [DIAGNOSTIC] Response body   : ${response.body}');
 
       if (response.statusCode == 200) {
         debugPrint('[+] KNOCK ACCEPTED — gateway open.');
@@ -50,6 +64,7 @@ class NetworkService {
       );
       return false;
     } catch (e) {
+      debugPrint('🚨 [DIAGNOSTIC] EXCEPTION caught: $e');
       debugPrint('[-] NETWORK ERROR — could not reach gateway: $e');
       return false;
     }

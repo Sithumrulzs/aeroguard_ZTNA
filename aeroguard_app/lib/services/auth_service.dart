@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
-import '../config/environment_config.dart';
+import '../config/api_constants.dart';
 
 /// Manages authentication with the AeroGuard backend
 class AuthService {
@@ -11,10 +11,34 @@ class AuthService {
 
   static final _vault = const FlutterSecureStorage();
 
-  /// Authenticate using credentials
+  // Offline test credentials — used only when the gateway is unreachable.
+  static const Map<String, Map<String, String>> _offlineAdmins = {
+    'sithum.it': {'password': 'It@kss69', 'device_id': 'admin_kss_jayamanna'},
+    'dulshi.it': {'password': 'It@ds69',  'device_id': 'admin_ds_kalansooriya'},
+    'yasas.it':  {'password': 'It@syl69', 'device_id': 'admin_syl_geeganage'},
+    'dulen.it':  {'password': 'It@ads69', 'device_id': 'admin_ads_abayarathna'},
+  };
+
+  static AuthResponse _offlineLogin(String username, String password) {
+    final admin = _offlineAdmins[username];
+    if (admin == null || admin['password'] != password) {
+      return AuthResponse(success: false, message: 'Invalid username or password');
+    }
+    debugPrint('[+] OFFLINE LOGIN: $username');
+    return AuthResponse(
+      success: true,
+      username: username,
+      deviceId: admin['device_id']!,
+      message: 'Offline mode — gateway unreachable',
+    );
+  }
+
+  /// Authenticate using credentials.
+  /// Tries the live gateway first; falls back to offline credentials
+  /// when the gateway is unreachable (no server / no network).
   static Future<AuthResponse> login(String username, String password) async {
     try {
-      final uri = Uri.parse('${EnvironmentConfig.baseUrl}/login');
+      final uri = Uri.parse('${ApiConstants.baseUrl}/login');
 
       debugPrint('[*] Attempting login for user: $username');
       debugPrint('[*] Gateway: ${uri.toString()}');
@@ -26,8 +50,8 @@ class AuthService {
             body: jsonEncode({'username': username, 'password': password}),
           )
           .timeout(
-            const Duration(seconds: 10),
-            onTimeout: () => throw Exception('Login request timeout'),
+            const Duration(seconds: 6),
+            onTimeout: () => throw Exception('timeout'),
           );
 
       debugPrint('[*] Login response status: ${response.statusCode}');
@@ -35,11 +59,7 @@ class AuthService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
 
-        // Store credentials securely
-        await _vault.write(
-          key: _usernameKey,
-          value: data['username'] ?? username,
-        );
+        await _vault.write(key: _usernameKey, value: data['username'] ?? username);
         await _vault.write(key: _deviceIdKey, value: data['device_id'] ?? '');
 
         debugPrint('[+] LOGIN SUCCESSFUL: ${data['username']}');
@@ -51,21 +71,19 @@ class AuthService {
           message: data['message'] ?? 'Authentication successful',
         );
       } else if (response.statusCode == 401) {
-        debugPrint('[-] Invalid credentials');
-        return AuthResponse(
-          success: false,
-          message: 'Invalid username or password',
-        );
+        return AuthResponse(success: false, message: 'Invalid username or password');
       } else {
-        debugPrint('[-] Login failed: ${response.statusCode}');
-        return AuthResponse(
-          success: false,
-          message: 'Login failed: ${response.statusCode}',
-        );
+        return AuthResponse(success: false, message: 'Login failed: ${response.statusCode}');
       }
-    } catch (e) {
-      debugPrint('[-] Login error: $e');
-      return AuthResponse(success: false, message: 'Network error: $e');
+    } catch (_) {
+      // Gateway unreachable — fall back to offline credential check
+      debugPrint('[!] Gateway unreachable — trying offline mode');
+      final result = _offlineLogin(username, password);
+      if (result.success) {
+        await _vault.write(key: _usernameKey, value: result.username!);
+        await _vault.write(key: _deviceIdKey, value: result.deviceId ?? '');
+      }
+      return result;
     }
   }
 

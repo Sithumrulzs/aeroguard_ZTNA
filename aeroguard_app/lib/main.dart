@@ -3,13 +3,7 @@ import 'package:flutter/services.dart';
 
 // --- CORE SCREENS & CONFIG ---
 import 'screens/home_load_page.dart';
-import 'screens/sign_in_page.dart';
 import 'config/environment_config.dart';
-import 'services/auth_service.dart';
-
-// --- BACKGROUND SERVICES ---
-// import 'services/enclave_service.dart';
-// import 'services/notification_service.dart';
 
 void main() async {
   // Ensure the Flutter engine is fully booted before initializing native hardware
@@ -89,70 +83,7 @@ class AeroGuardApp extends StatelessWidget {
         ),
       ),
 
-      home: const AuthWrapper(),
-    );
-  }
-}
-
-// Wrapper to check authentication status
-class AuthWrapper extends StatefulWidget {
-  const AuthWrapper({super.key});
-
-  @override
-  State<AuthWrapper> createState() => _AuthWrapperState();
-}
-
-class _AuthWrapperState extends State<AuthWrapper> {
-  late Future<bool> _authCheck;
-
-  @override
-  void initState() {
-    super.initState();
-    _authCheck = AuthService.isAuthenticated();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<bool>(
-      future: _authCheck,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          // Show loading screen while checking auth
-          return Scaffold(
-            backgroundColor: const Color(0xFF050810),
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    height: 50,
-                    width: 50,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Colors.cyan.shade500,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Initializing...',
-                    style: TextStyle(color: Colors.white70),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
-
-        if (snapshot.hasData && snapshot.data == true) {
-          // User is authenticated, show home load page
-          return const HomeLoadPage();
-        } else {
-          // User is not authenticated, show login page
-          return const SignInPage();
-        }
-      },
+      home: const HomeLoadPage(),
     );
   }
 }
