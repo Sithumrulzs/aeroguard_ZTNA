@@ -1,21 +1,35 @@
 """
-AeroGuard ZTNA — Central Authentication Server
-Handles identity management, device registration, audit queries,
-and vendor session provisioning. The Kali gateway defers all
-identity decisions to this service.
+AeroGuard ZTNA — Central Auth Server
+Handles identity management, login, vendor provisioning, and dashboard APIs.
+Connects directly to the Supabase PostgreSQL database via psycopg2.
+Credentials are loaded from .env — never hardcoded.
 """
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from contextlib import contextmanager
 from datetime import datetime, timezone
-import sqlite3
-import hashlib
-import json
+from typing import Optional
+from dotenv import load_dotenv
+import psycopg2
+import psycopg2.extras
+import bcrypt
 import os
 import uvicorn
 
-app = FastAPI(title="AeroGuard Central Auth Server")
+# ── Load environment ──────────────────────────────────────────────────────────
+load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL")
+PORT         = int(os.getenv("PORT", "8001"))
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL not set. Check backend_central_auth/.env")
+
+app = FastAPI(
+    title="AeroGuard ZTNA — Central Auth",
+    description="Identity, login, vendor provisioning and SIEM dashboard.",
+    version="1.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,169 +39,243 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Shared database — same file as the gateway
-DB_FILE = os.path.join(os.path.dirname(__file__), "..", "backend_kali_gateway", "aeroguard_offline.db")
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# DB HELPER
-# ──────────────────────────────────────────────────────────────────────────────
-def execute_db(query: str, params: tuple = ()):
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute(query, params)
-    if query.strip().upper().startswith(("INSERT", "UPDATE", "DELETE")):
+# ── Database connection ───────────────────────────────────────────────────────
+@contextmanager
+def get_db():
+    """Context manager yielding a psycopg2 connection with RealDictCursor."""
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        yield conn
         conn.commit()
-        result = cursor.lastrowid
-    else:
-        result = cursor.fetchall()
-    conn.close()
-    return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PYDANTIC MODELS
-# ──────────────────────────────────────────────────────────────────────────────
-class DeviceRegisterPayload(BaseModel):
-    device_id:  str
+def insert_audit(event_type: str, username: str, client_ip: str,
+                 status_val: str, details: str):
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO audit_logs
+                       (event_type, username, client_ip, status, details, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (event_type, username, client_ip, status_val,
+                     details, datetime.now(timezone.utc).isoformat())
+                )
+    except Exception as e:
+        print(f"[-] Audit log failed: {e}")
+
+
+# ── Pydantic models ───────────────────────────────────────────────────────────
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class LogIngestPayload(BaseModel):
+    event_type: str
     username:   str
-    public_key: str
-
-class DeviceRevokePayload(BaseModel):
-    device_id: str
+    client_ip:  str
+    status:     str
+    details:    str
 
 class VendorProvisionPayload(BaseModel):
-    token_hash:      str
-    vendor_name:     str
-    company:         str
-    clearance_level: str = "standard"
-    target_device:   str = ""
-    valid_until:     str  # ISO 8601 UTC
+    vendor_username:  str
+    company_name:     str
+    clearance_level:  str
+    target_device_id: str
+    valid_until:      str
+    qr_token:         Optional[str] = None
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# IDENTITY MANAGEMENT
-# ──────────────────────────────────────────────────────────────────────────────
-@app.post("/auth/register-device")
-async def register_device(payload: DeviceRegisterPayload):
-    """Register an admin phone's ECDSA public key."""
-    existing = execute_db(
-        "SELECT id FROM authorized_devices WHERE device_id = ?",
-        (payload.device_id,)
-    )
-    if existing:
-        execute_db(
-            "UPDATE authorized_devices SET public_key = ?, is_active = 1 WHERE device_id = ?",
-            (payload.public_key, payload.device_id)
-        )
-        return {"status": "updated", "device_id": payload.device_id}
-
-    execute_db(
-        "INSERT INTO authorized_devices (device_id, username, public_key, is_active) VALUES (?, ?, ?, 1)",
-        (payload.device_id, payload.username, payload.public_key)
-    )
-    return {"status": "registered", "device_id": payload.device_id}
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+@app.get("/")
+async def root():
+    return {"status": "online", "service": "AeroGuard ZTNA Central Auth"}
 
 
-@app.post("/auth/revoke-device")
-async def revoke_device(payload: DeviceRevokePayload):
-    """Revoke an admin device — all future knocks will be denied."""
-    execute_db(
-        "UPDATE authorized_devices SET is_active = 0 WHERE device_id = ?",
-        (payload.device_id,)
-    )
-    return {"status": "revoked", "device_id": payload.device_id}
+@app.post("/api/v1/auth/login")
+async def central_login(payload: LoginRequest, request: Request):
+    client_ip = request.client.host
 
-
-@app.get("/auth/devices")
-async def list_devices():
-    """List all registered devices."""
-    rows = execute_db("SELECT device_id, username, is_active FROM authorized_devices")
-    return [dict(r) for r in rows]
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# VENDOR SESSION PROVISIONING
-# ──────────────────────────────────────────────────────────────────────────────
-@app.post("/auth/provision-vendor")
-async def provision_vendor(payload: VendorProvisionPayload):
-    """Admin provisions a vendor JIT session."""
     try:
-        expiry = datetime.fromisoformat(payload.valid_until.replace("Z", "+00:00"))
-        if expiry <= datetime.now(timezone.utc):
-            raise HTTPException(status_code=400, detail="valid_until must be a future timestamp.")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid valid_until format.")
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM users WHERE username = %s",
+                            (payload.username,))
+                user = cur.fetchone()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
-    existing = execute_db(
-        "SELECT id FROM vendor_sessions WHERE token_hash = ?",
-        (payload.token_hash,)
-    )
-    if existing:
-        raise HTTPException(status_code=409, detail="Token hash already provisioned.")
+    # Verify bcrypt password
+    password_valid = False
+    if user:
+        try:
+            password_valid = bcrypt.checkpw(
+                payload.password.encode(),
+                user["password_hash"].encode()
+            )
+        except Exception:
+            password_valid = False
 
-    execute_db(
-        "INSERT INTO vendor_sessions "
-        "(token_hash, vendor_name, company, clearance_level, target_device, valid_until, bound_ip, is_active) "
-        "VALUES (?, ?, ?, ?, ?, ?, '', 1)",
-        (payload.token_hash, payload.vendor_name, payload.company,
-         payload.clearance_level, payload.target_device, payload.valid_until)
-    )
+    if not user or not password_valid:
+        insert_audit("APP_LOGIN", payload.username, client_ip,
+                     "DENIED", "Invalid credentials.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Access Denied: Invalid credentials.")
+
+    insert_audit("APP_LOGIN", payload.username, client_ip,
+                 "SUCCESS", f"Login successful. Role: {user['role']}")
+
     return {
-        "status": "provisioned",
-        "vendor_name": payload.vendor_name,
-        "valid_until": payload.valid_until,
+        "status":    "authenticated",
+        "username":  user["username"],
+        "role":      user["role"],
+        "device_id": user.get("device_id") or "pending",
+        "token":     "aeroguard_session_stub",
     }
 
 
-@app.get("/auth/vendor-sessions")
-async def list_vendor_sessions():
-    """List all vendor sessions."""
-    rows = execute_db(
-        "SELECT vendor_name, company, clearance_level, valid_until, bound_ip, is_active FROM vendor_sessions"
-    )
-    return [dict(r) for r in rows]
+@app.post("/api/v1/logs/write")
+async def ingest_log(payload: LogIngestPayload):
+    insert_audit(payload.event_type, payload.username, payload.client_ip,
+                 payload.status, payload.details)
+    return {"status": "synchronized",
+            "message": "Log stored in central SIEM archive."}
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# AUDIT LOG QUERIES
-# ──────────────────────────────────────────────────────────────────────────────
-@app.get("/auth/audit-logs")
-async def get_audit_logs(limit: int = 50):
-    """Return the latest audit log entries."""
-    rows = execute_db(
-        "SELECT event_type, device_id, status, ip_address, details, created_at "
-        "FROM audit_logs ORDER BY id DESC LIMIT ?",
-        (limit,)
-    )
-    return [dict(r) for r in rows]
+@app.post("/api/v1/provision-vendor")
+async def provision_vendor(payload: VendorProvisionPayload):
+    token = (payload.qr_token or
+             f"AEROGUARD_QR_{payload.vendor_username.upper()}_{int(datetime.now().timestamp())}")
+
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                # Upsert vendor identity into users
+                cur.execute(
+                    """INSERT INTO users (username, password_hash, role, device_id,
+                                         public_key_pem, locked_mac)
+                       VALUES (%s, %s, 'vendor', %s, %s, '')
+                       ON CONFLICT (username) DO UPDATE
+                           SET device_id      = EXCLUDED.device_id,
+                               public_key_pem = EXCLUDED.public_key_pem,
+                               locked_mac     = ''""",
+                    (payload.vendor_username,
+                     "ephemeral_vendor_no_pass",
+                     payload.target_device_id,
+                     "dummy_key_until_scanned")
+                )
+
+                # Insert vendor session
+                cur.execute(
+                    """INSERT INTO vendor_sessions
+                       (qr_token, vendor_username, company_name,
+                        clearance_level, status, valid_until)
+                       VALUES (%s, %s, %s, %s, 'pending', %s)""",
+                    (token, payload.vendor_username, payload.company_name,
+                     payload.clearance_level, payload.valid_until)
+                )
+
+        insert_audit("VENDOR_PROVISION", payload.vendor_username, "CONTROL_PLANE",
+                     "SUCCESS",
+                     f"Vendor provisioned for {payload.company_name}. Token: {token}")
+
+        return {"status": "profile_synced",
+                "message": "Vendor session created.",
+                "generated_qr_string": token}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Provision failed: {e}")
 
 
-@app.get("/auth/audit-logs/{event_type}")
-async def get_audit_logs_by_type(event_type: str, limit: int = 50):
-    """Filter audit logs by event type (ADMIN_KNOCK, VENDOR_KNOCK, etc.)."""
-    rows = execute_db(
-        "SELECT event_type, device_id, status, ip_address, details, created_at "
-        "FROM audit_logs WHERE event_type = ? ORDER BY id DESC LIMIT ?",
-        (event_type.upper(), limit)
-    )
-    return [dict(r) for r in rows]
+@app.get("/api/v1/dashboard/stats")
+async def dashboard_stats():
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                # Active admins
+                cur.execute("SELECT username FROM users WHERE role = 'admin'")
+                admins      = cur.fetchall()
+                admin_names = [r["username"] for r in admins]
+
+                # Active vendors (unexpired sessions)
+                now = datetime.now(timezone.utc).isoformat()
+                cur.execute(
+                    "SELECT DISTINCT vendor_username FROM vendor_sessions "
+                    "WHERE valid_until > %s AND status != 'expired'", (now,)
+                )
+                active_vendors = cur.fetchall()
+
+                # Successful ZTNA knocks today
+                today = datetime.now(timezone.utc).date().isoformat()
+                cur.execute(
+                    "SELECT COUNT(*) AS cnt FROM audit_logs "
+                    "WHERE event_type = 'ZTNA_KNOCK' AND status = 'GRANTED' "
+                    "AND created_at >= %s", (today,)
+                )
+                knocks = cur.fetchone()["cnt"]
+
+        return {
+            "active_admins":      len(admin_names),
+            "admin_names":        admin_names,
+            "active_vendors":     len(active_vendors),
+            "total_knocks_today": knocks,
+            "gateway_status":     "SECURED",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Stats query failed: {e}")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# HEALTH
-# ──────────────────────────────────────────────────────────────────────────────
+@app.get("/api/v1/dashboard/telemetry")
+async def dashboard_telemetry(limit: int = 10):
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                # Recent audit events
+                cur.execute(
+                    "SELECT event_type, username, client_ip, status, details, created_at "
+                    "FROM audit_logs ORDER BY created_at DESC LIMIT %s", (limit,)
+                )
+                events = cur.fetchall()
+
+                # Active admins
+                cur.execute("SELECT username FROM users WHERE role = 'admin'")
+                admin_names = [r["username"] for r in cur.fetchall()]
+
+                # Active vendors
+                now = datetime.now(timezone.utc).isoformat()
+                cur.execute(
+                    "SELECT DISTINCT vendor_username FROM vendor_sessions "
+                    "WHERE valid_until > %s AND status != 'expired'", (now,)
+                )
+                vendor_names = [r["vendor_username"] for r in cur.fetchall()]
+
+        return {
+            "events":              [dict(e) for e in events],
+            "active_admins":       len(admin_names),
+            "active_admin_names":  admin_names,
+            "active_vendors":      len(vendor_names),
+            "active_vendor_names": vendor_names,
+            "gateway_status":      "SECURED",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Telemetry query failed: {e}")
+
+
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "AeroGuard Central Auth Server"}
+    return {"status": "ok", "service": "AeroGuard Central Auth"}
 
 
 if __name__ == "__main__":
     print("\n" + "=" * 70)
-    print("AeroGuard Central Auth Server Starting")
+    print("AeroGuard Central Auth  —  port 8001")
     print("=" * 70)
-    print(f"Shared DB : {os.path.abspath(DB_FILE)}")
-    print("Listen    : 0.0.0.0:8001")
+    print(f"Database : {'SET' if DATABASE_URL else 'MISSING — check .env'}")
+    print(f"Port     : {PORT}")
     print("=" * 70 + "\n")
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=False)

@@ -11,37 +11,14 @@ class AuthService {
 
   static final _vault = const FlutterSecureStorage();
 
-  // Offline test credentials — used only when the gateway is unreachable.
-  static const Map<String, Map<String, String>> _offlineAdmins = {
-    'sithum.it': {'password': 'It@kss69', 'device_id': 'admin_kss_jayamanna'},
-    'dulshi.it': {'password': 'It@ds69',  'device_id': 'admin_ds_kalansooriya'},
-    'yasas.it':  {'password': 'It@syl69', 'device_id': 'admin_syl_geeganage'},
-    'dulen.it':  {'password': 'It@ads69', 'device_id': 'admin_ads_abayarathna'},
-  };
-
-  static AuthResponse _offlineLogin(String username, String password) {
-    final admin = _offlineAdmins[username];
-    if (admin == null || admin['password'] != password) {
-      return AuthResponse(success: false, message: 'Invalid username or password');
-    }
-    debugPrint('[+] OFFLINE LOGIN: $username');
-    return AuthResponse(
-      success: true,
-      username: username,
-      deviceId: admin['device_id']!,
-      message: 'Offline mode — gateway unreachable',
-    );
-  }
-
-  /// Authenticate using credentials.
-  /// Tries the live gateway first; falls back to offline credentials
-  /// when the gateway is unreachable (no server / no network).
+  /// Authenticate against the central auth server (backend_central_auth:8001).
   static Future<AuthResponse> login(String username, String password) async {
     try {
-      final uri = Uri.parse('${ApiConstants.baseUrl}/login');
+      // Login goes to central auth server (port 8001), not the gateway
+      final uri = Uri.parse(ApiConstants.loginEndpoint);
 
       debugPrint('[*] Attempting login for user: $username');
-      debugPrint('[*] Gateway: ${uri.toString()}');
+      debugPrint('[*] Central Auth: ${uri.toString()}');
 
       final response = await http
           .post(
@@ -59,6 +36,7 @@ class AuthService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
 
+        // Central auth returns: {status, username, role, device_id, token}
         await _vault.write(key: _usernameKey, value: data['username'] ?? username);
         await _vault.write(key: _deviceIdKey, value: data['device_id'] ?? '');
 
@@ -68,7 +46,7 @@ class AuthService {
           success: true,
           username: data['username'] ?? username,
           deviceId: data['device_id'] ?? '',
-          message: data['message'] ?? 'Authentication successful',
+          message: 'Authentication successful',
         );
       } else if (response.statusCode == 401) {
         return AuthResponse(success: false, message: 'Invalid username or password');
@@ -76,14 +54,11 @@ class AuthService {
         return AuthResponse(success: false, message: 'Login failed: ${response.statusCode}');
       }
     } catch (_) {
-      // Gateway unreachable — fall back to offline credential check
-      debugPrint('[!] Gateway unreachable — trying offline mode');
-      final result = _offlineLogin(username, password);
-      if (result.success) {
-        await _vault.write(key: _usernameKey, value: result.username!);
-        await _vault.write(key: _deviceIdKey, value: result.deviceId ?? '');
-      }
-      return result;
+      debugPrint('[-] Central auth unreachable. Check server connection.');
+      return AuthResponse(
+        success: false,
+        message: 'Cannot reach authentication server. Check your connection.',
+      );
     }
   }
 

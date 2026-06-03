@@ -1,5 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:http/http.dart' as http;
+import '../config/api_constants.dart';
 import '../config/transitions.dart';
 import '../services/auth_service.dart';
 import '../widgets/live_telemetry_panel.dart';
@@ -164,9 +168,61 @@ class _NavItem extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // TAB 1 — OVERVIEW
 // ─────────────────────────────────────────────────────────────────────────────
-class _OverviewTab extends StatelessWidget {
+class _OverviewTab extends StatefulWidget {
   final VoidCallback onLogout;
   const _OverviewTab({required this.onLogout});
+
+  @override
+  State<_OverviewTab> createState() => _OverviewTabState();
+}
+
+class _OverviewTabState extends State<_OverviewTab> {
+  Timer? _timer;
+  String _username       = 'ADMIN';
+  String _activeAdmins   = '—';
+  String _activeVendors  = '—';
+  String _totalKnocks    = '—';
+  String _gatewayStatus  = '—';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUsername();
+    _fetchStats();
+    // Refresh stats every 30 seconds
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _fetchStats());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadUsername() async {
+    final u = await AuthService.getUsername();
+    if (mounted && u != null) setState(() => _username = u.toUpperCase());
+  }
+
+  Future<void> _fetchStats() async {
+    try {
+      final response = await http
+          .get(Uri.parse(ApiConstants.dashboardStatsEndpoint))
+          .timeout(const Duration(seconds: 8));
+      if (!mounted) return;
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        setState(() {
+          _activeAdmins  = '${data['active_admins']  ?? '—'}';
+          _activeVendors = '${data['active_vendors']  ?? '—'}';
+          _totalKnocks   = '${data['total_knocks_today'] ?? '—'}';
+          _gatewayStatus = data['gateway_status'] ?? 'SECURED';
+        });
+      }
+    } catch (_) {
+      // Silently keep previous values on network error
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -201,7 +257,7 @@ class _OverviewTab extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'ADMIN  ·  sithum.it',
+                        'ADMIN  ·  $_username',
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.3),
                           fontSize: 10,
@@ -212,7 +268,7 @@ class _OverviewTab extends StatelessWidget {
                   ),
                   const Spacer(),
                   IconButton(
-                    onPressed: onLogout,
+                    onPressed: widget.onLogout,
                     icon: const Icon(
                       Icons.power_settings_new,
                       color: Color(0xFF475569),
@@ -239,26 +295,26 @@ class _OverviewTab extends StatelessWidget {
                       mainAxisSpacing: 12,
                       crossAxisSpacing: 12,
                       childAspectRatio: 1.65,
-                      children: const [
+                      children: [
                         _MetricCard(
                           label: 'ACTIVE ADMINS',
-                          value: '1',
+                          value: _activeAdmins,
                           icon: Icons.person_outline_rounded,
                         ),
                         _MetricCard(
                           label: 'ACTIVE VENDORS',
-                          value: '0',
+                          value: _activeVendors,
                           icon: Icons.people_outline_rounded,
                         ),
                         _MetricCard(
-                          label: 'PACKETS',
-                          value: '—',
+                          label: 'KNOCKS TODAY',
+                          value: _totalKnocks,
                           icon: Icons.data_usage_outlined,
                         ),
                         _MetricCard(
-                          label: 'UPTIME',
-                          value: '—',
-                          icon: Icons.timer_outlined,
+                          label: 'GATEWAY',
+                          value: _gatewayStatus,
+                          icon: Icons.shield_outlined,
                         ),
                       ],
                     ),

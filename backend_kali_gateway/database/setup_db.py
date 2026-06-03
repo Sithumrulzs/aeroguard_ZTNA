@@ -1,6 +1,10 @@
 from passlib.context import CryptContext
-from database.db_core import SessionLocal, engine, Base
-from database.models import Admin
+try:
+    from database.db_core import SessionLocal, engine, Base   # run from backend_kali_gateway/
+    from database.models import Admin
+except ImportError:
+    from .db_core import SessionLocal, engine, Base           # imported as a package
+    from .models import Admin
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

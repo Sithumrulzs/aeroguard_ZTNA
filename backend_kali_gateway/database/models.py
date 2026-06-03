@@ -1,5 +1,8 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
-from database.db_core import Base
+try:
+    from database.db_core import Base       # when run from backend_kali_gateway/
+except ImportError:
+    from .db_core import Base               # when imported as a package
 
 class Admin(Base):
     """Stores permanent, hardware-bound identities for Network Admins."""

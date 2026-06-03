@@ -33,24 +33,40 @@ class EnclaveService {
   /// Generates and stores hardware keys on first run.
   /// Key generation is offloaded to a background isolate so the loading
   /// animation stays smooth.
+  // Key name must match what AuthService stores after a successful login
+  static const String _backendDeviceIdKey = 'aeroguard_device_id_from_backend';
+
   static Future<void> initializeDevice(String username) async {
-    String? existingKey = await _vault.read(key: _privateKeyName);
+    final String? existingKey = await _vault.read(key: _privateKeyName);
+    final String? backendId   = await _vault.read(key: _backendDeviceIdKey);
+    final bool    hasBackendId = backendId != null && backendId.isNotEmpty;
 
     if (existingKey == null) {
+      // First run — generate key pair and store server-assigned device_id.
       debugPrint('[*] No key found. Generating hardware identity...');
-
-      // Heavy crypto in background isolate — UI thread stays free
       final keys = await compute(_generateEcdsaKeyPair, null);
-      final deviceId = getDeviceIdForUser(username);
+
+      final deviceId = hasBackendId
+          ? backendId
+          : 'admin_${username.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_')}';
 
       await _vault.write(key: _privateKeyName, value: keys[0]);
-      await _vault.write(key: _publicKeyName, value: keys[1]);
-      await _vault.write(key: _deviceIdName, value: deviceId);
+      await _vault.write(key: _publicKeyName,  value: keys[1]);
+      await _vault.write(key: _deviceIdName,   value: deviceId);
 
       debugPrint('[+] Device Provisioned. Private Key locked in vault.');
       debugPrint('[!] PUBLIC KEY FOR DATABASE: ${keys[1]}');
       debugPrint('[!] DEVICE ID: $deviceId');
     } else {
+      // Keys already exist — but always sync device_id with the server's
+      // latest value so a stale vault ID (e.g. admin_admin) gets corrected.
+      if (hasBackendId) {
+        final storedId = await _vault.read(key: _deviceIdName);
+        if (storedId != backendId) {
+          await _vault.write(key: _deviceIdName, value: backendId);
+          debugPrint('[~] Device ID synced from server: $backendId');
+        }
+      }
       debugPrint('[+] Secure Enclave verified. Hardware identity intact.');
     }
   }
@@ -62,16 +78,6 @@ class EnclaveService {
     if (hexKey == null) return null;
 
     return compute(_signPayloadIsolate, {'hexKey': hexKey, 'payload': payload});
-  }
-
-  static String getDeviceIdForUser(String username) {
-    switch (username) {
-      case 'sithum.it': return 'admin_kss_jayamanna';
-      case 'dulshi.it': return 'admin_ds_kalansooriya';
-      case 'yasas.it':  return 'admin_syl_geeganage';
-      case 'dulen.it':  return 'admin_ads_abayarathna';
-      default:          return 'admin_admin';
-    }
   }
 
   static Future<String> getDeviceId() async {
@@ -96,17 +102,27 @@ class EnclaveService {
   static Future<Map<String, dynamic>?> generateZeroTrustPayload(
     String username,
   ) async {
-    final String? deviceId = await _vault.read(key: _deviceIdName);
+    // Always prefer the device_id the server assigned at login.
+    // This corrects any stale value (e.g. 'admin_admin') left in the vault
+    // from before the central auth server was connected.
+    final backendId = await _vault.read(key: _backendDeviceIdKey);
+    final localId   = await _vault.read(key: _deviceIdName);
+    final deviceId  = (backendId != null && backendId.isNotEmpty)
+        ? backendId
+        : localId;
+
     if (deviceId == null) return null;
 
-    final timestamp = DateTime.now().toUtc().toIso8601String();
-    final rawData = '$deviceId:$username:$timestamp';
+    final timestamp    = DateTime.now().toUtc().toIso8601String();
+    final rawData      = '$deviceId:$username:$timestamp';
     final signatureHex = await signPayload(rawData);
     if (signatureHex == null) return null;
 
+    debugPrint('[*] Knock payload — device_id: $deviceId');
+
     return {
       'device_id': deviceId,
-      'username': username,
+      'username':  username,
       'timestamp': timestamp,
       'signature': signatureHex,
     };

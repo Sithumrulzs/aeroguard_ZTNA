@@ -1,14 +1,21 @@
 class ApiConstants {
-  // Replace with your Ubuntu Gateway's actual IP address
-  static const String gatewayIp = "192.168.100.130";
+  // ── Kali Gateway — iptables / knock enforcement (port 8000) ──────────────
+  static const String gatewayIp   = "192.168.100.130";
   static const String gatewayPort = "8000";
+  static const String baseUrl     = "http://$gatewayIp:$gatewayPort/api/v1";
 
-  static const String baseUrl = "http://$gatewayIp:$gatewayPort/api/v1";
+  static const String knockEndpoint          = "$baseUrl/knock";
+  static const String vendorKnockEndpoint    = "$baseUrl/vendor_knock";
+  static const String provisionVendorEndpoint = "$baseUrl/provision-vendor";
 
-  // Zero Trust Endpoints
-  static const String knockEndpoint = "$baseUrl/knock";
-  static const String revokeEndpoint = "$baseUrl/device/revoke";
+  // ── Central Auth — identity / login (port 8001) ───────────────────────────
+  static const String centralAuthPort = "8001";
+  static const String centralAuthUrl  = "http://$gatewayIp:$centralAuthPort/api/v1";
 
-  // Network Timeouts (Crucial for mobile environments)
+  static const String loginEndpoint             = "$centralAuthUrl/auth/login";
+  static const String dashboardStatsEndpoint    = "$centralAuthUrl/dashboard/stats";
+  static const String dashboardTelemetryEndpoint = "$centralAuthUrl/dashboard/telemetry";
+
+  // ── Timeouts ──────────────────────────────────────────────────────────────
   static const int connectionTimeoutSeconds = 15;
 }

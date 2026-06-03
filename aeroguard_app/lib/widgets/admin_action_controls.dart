@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'cyber_button.dart';
+import '../services/auth_service.dart';
 import '../services/network_service.dart';
 import '../config/transitions.dart';
 import '../screens/provision_token_screen.dart';
@@ -16,8 +17,8 @@ class _AdminActionControlsState extends State<AdminActionControls> {
 
   Future<void> _handleKnock() async {
     setState(() => _isKnocking = true);
-    final success =
-        await NetworkService.sendAuthorizationKnock('sithum.it');
+    final username = await AuthService.getUsername() ?? '';
+    final success = await NetworkService.sendAuthorizationKnock(username);
     setState(() => _isKnocking = false);
 
     if (!mounted) return;

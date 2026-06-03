@@ -1,43 +1,145 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import '../config/api_constants.dart';
 import 'dashboard_panel.dart';
 
-class LiveTelemetryPanel extends StatelessWidget {
+class LiveTelemetryPanel extends StatefulWidget {
   const LiveTelemetryPanel({super.key});
+
+  @override
+  State<LiveTelemetryPanel> createState() => _LiveTelemetryPanelState();
+}
+
+class _LiveTelemetryPanelState extends State<LiveTelemetryPanel> {
+  Timer? _timer;
+
+  int    _activeAdmins  = 0;
+  int    _activeVendors = 0;
+  String _gatewayStatus = 'CHECKING...';
+  String _adminLabel    = '—';
+  String _vendorLabel   = 'Idle';
+  String _lastEvent     = '—';
+  bool   _loading       = true;
+  bool   _error         = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetch();
+    // Poll every 15 seconds
+    _timer = Timer.periodic(const Duration(seconds: 15), (_) => _fetch());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetch() async {
+    try {
+      final response = await http
+          .get(Uri.parse(ApiConstants.dashboardTelemetryEndpoint))
+          .timeout(const Duration(seconds: 8));
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+        final adminNames  = List<String>.from(data['active_admin_names'] ?? []);
+        final vendorNames = List<String>.from(data['active_vendor_names'] ?? []);
+        final events      = List<Map<String, dynamic>>.from(data['events'] ?? []);
+
+        String lastEvent = '—';
+        if (events.isNotEmpty) {
+          final e = events.first;
+          lastEvent = '${e['event_type'] ?? ''} · ${e['status'] ?? ''}';
+        }
+
+        setState(() {
+          _activeAdmins  = (data['active_admins'] as num?)?.toInt() ?? 0;
+          _activeVendors = (data['active_vendors'] as num?)?.toInt() ?? 0;
+          _gatewayStatus = data['gateway_status'] ?? 'SECURED';
+          _adminLabel    = adminNames.isEmpty
+              ? '$_activeAdmins · None'
+              : '$_activeAdmins · ${adminNames.first}';
+          _vendorLabel   = vendorNames.isEmpty
+              ? '$_activeVendors · Idle'
+              : '$_activeVendors · ${vendorNames.first}';
+          _lastEvent     = lastEvent;
+          _loading       = false;
+          _error         = false;
+        });
+      } else {
+        if (mounted) setState(() { _error = true; _loading = false; });
+      }
+    } catch (_) {
+      if (mounted) setState(() { _error = true; _loading = false; });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return DashboardPanel(
       title: 'Network Telemetry',
       icon: Icons.radar,
-      child: Column(
-        children: [
-          _TelemetryRow(
-            label: 'Active Admins',
-            value: '1 · sithum.it',
-            statusColor: const Color(0xFF10B981),
-          ),
-          const SizedBox(height: 14),
-          _TelemetryRow(
-            label: 'Active Vendors',
-            value: '0 · Idle',
-            statusColor: const Color(0xFF475569),
-          ),
-          const SizedBox(height: 14),
-          _TelemetryRow(
-            label: 'Gateway Status',
-            value: 'SECURED',
-            statusColor: const Color(0xFF00C3FF),
-          ),
-        ],
-      ),
+      child: _loading
+          ? const Center(
+              child: SizedBox(
+                height: 24,
+                width: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00C3FF)),
+                ),
+              ),
+            )
+          : Column(
+              children: [
+                _TelemetryRow(
+                  label: 'Active Admins',
+                  value: _error ? '—' : _adminLabel,
+                  statusColor: _activeAdmins > 0
+                      ? const Color(0xFF10B981)
+                      : const Color(0xFF475569),
+                ),
+                const SizedBox(height: 14),
+                _TelemetryRow(
+                  label: 'Active Vendors',
+                  value: _error ? '—' : _vendorLabel,
+                  statusColor: _activeVendors > 0
+                      ? Colors.orangeAccent
+                      : const Color(0xFF475569),
+                ),
+                const SizedBox(height: 14),
+                _TelemetryRow(
+                  label: 'Gateway Status',
+                  value: _error ? 'OFFLINE' : _gatewayStatus,
+                  statusColor: _error
+                      ? const Color(0xFFEF4444)
+                      : const Color(0xFF00C3FF),
+                ),
+                const SizedBox(height: 14),
+                _TelemetryRow(
+                  label: 'Last Event',
+                  value: _lastEvent,
+                  statusColor: const Color(0xFF475569),
+                ),
+              ],
+            ),
     );
   }
 }
 
+// ── Shared row widget ─────────────────────────────────────────────────────────
+
 class _TelemetryRow extends StatelessWidget {
   final String label;
   final String value;
-  final Color statusColor;
+  final Color  statusColor;
 
   const _TelemetryRow({
     required this.label,
