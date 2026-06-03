@@ -4,35 +4,29 @@ try:
 except ImportError:
     from .db_core import Base               # when imported as a package
 
+
 class Admin(Base):
-    """Stores permanent, hardware-bound identities for Network Admins."""
-    __tablename__ = "admins"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True) # e.g., sithum.it
-    password_hash = Column(String) # Never store plain text passwords!
-    
-    device_id = Column(String, unique=True, index=True) # App-generated unique ID
-    public_key_pem = Column(String) # The Secure Enclave "Hardware ID"
-    mac_address = Column(String, unique=True) # The Admin's Laptop MAC
-    is_active = Column(Boolean, default=True)
+    """Admin identity bound to a specific device and laptop MAC."""
+    __tablename__ = "users"                 # matches Supabase table name
+
+    id             = Column(Integer, primary_key=True, index=True)
+    username       = Column(String, unique=True, index=True)
+    password_hash  = Column(String)
+    role           = Column(String, default="admin")
+    device_id      = Column(String, unique=True, index=True)
+    public_key_pem = Column(String)
+    locked_mac     = Column(String)         # IP/MAC bound on first knock
+
 
 class VendorSession(Base):
-    """Stores JIT rules and rich telemetry for third-party auditing."""
+    """JIT vendor session — aligned with Supabase vendor_sessions schema."""
     __tablename__ = "vendor_sessions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    jit_token = Column(String, unique=True, index=True)
-    
-    # Targeting
-    mac_address = Column(String) # Vendor's Laptop MAC
-    target_ip = Column(String) 
-    
-    # Rich Telemetry (Gathered from the mobile app)
-    mobile_device_model = Column(String) # e.g., "iPhone 14 Pro" or "Samsung S23"
-    connected_ssid = Column(String) # The Wi-Fi network they are knocking from
-    knock_timestamp = Column(DateTime, default=func.now()) # Exact server time of knock
-    
-    # Lifecycle
-    expires_at = Column(DateTime)
-    is_revoked = Column(Boolean, default=False)
+
+    id              = Column(Integer, primary_key=True, index=True)
+    qr_token        = Column(String, unique=True, index=True)
+    vendor_username = Column(String)
+    company_name    = Column(String)
+    clearance_level = Column(String, default="standard")
+    status          = Column(String, default="pending")  # pending / active / expired
+    valid_until     = Column(String)
+    created_at      = Column(DateTime, default=func.now())
