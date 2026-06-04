@@ -10,7 +10,10 @@ spec:
     Handles admin login, vendor provisioning, audit logging, and dashboard APIs.
   type: service
   source:
-    sourceType: repository
+    git:
+      url: https://github.com/Sithumrulzs/backend_central_auth.git
+      ref: main
+      context: .
   
   # Deploy configuration
   deployment:
