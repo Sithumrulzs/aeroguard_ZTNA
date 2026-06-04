@@ -8,7 +8,7 @@ Credentials are loaded from .env — never hardcoded.
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from typing import Optional
 from dotenv import load_dotenv
@@ -21,7 +21,7 @@ import uvicorn
 # ── Load environment ──────────────────────────────────────────────────────────
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
-PORT         = int(os.getenv("PORT", "5432"))
+PORT         = int(os.getenv("PORT", "8001"))
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL not set. Check backend_central_auth/.env")
 
@@ -72,6 +72,31 @@ def insert_audit(event_type: str, username: str, client_ip: str,
         # This will now explicitly stream the exact error into Choreo logs if your table structure rejects it.
         print(f"\n[CRITICAL AUDIT ERROR] -> Failed to write to public.audit_logs table: {e}\n")
 
+# ── System Startup Verification ───────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("\n" + "="*80)
+    print("[AEROGUARD SYSTEM] Starting Central Auth Control Plane...")
+    print("="*80)
+    
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1;")
+                cur.fetchone()
+                
+        print("[DATABASE STATUS] CONNECTED")
+        print("[DATABASE STATUS] Secure link to Supabase PostgreSQL is fully functional.")
+        print("[SYSTEM STATUS]   AeroGuard ZTNA engine is ready to accept inbound traffic.")
+    except Exception as e:
+        print("[DATABASE STATUS] ERROR")
+        print(f"[DATABASE STATUS] Connection handshake failed.")
+        print(f"[CRITICAL FAILURE] Reason: {e}")
+        print("[SYSTEM STATUS]   Server starting in a degraded or disconnected state.")
+        
+    print("="*80 + "\n")
+    
+    yield  # 3. This keyword hands control back to FastAPI to start accepting traffic
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 class LoginRequest(BaseModel):

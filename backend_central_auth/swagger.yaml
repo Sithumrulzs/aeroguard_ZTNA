@@ -75,6 +75,9 @@ paths:
       tags:
         - Authentication
       summary: Admin login
+      x-auth-type: "None"
+      security: []
+      # ----------------------------------------
       description: |
         Authenticate user with username and password.
         Validates credentials against the users table.
