@@ -441,11 +441,3 @@ components:
         gateway_status:
           type: string
           example: SECURED
-
-    Error:
-      type: object
-      properties:
-        detail:
-          type: string
-          description: Error message
-          example: Invalid credentials
