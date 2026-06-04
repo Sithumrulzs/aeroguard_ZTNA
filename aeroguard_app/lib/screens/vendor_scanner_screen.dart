@@ -71,7 +71,7 @@ class _VendorScannerScreenState extends State<VendorScannerScreen> {
 
     Navigator.pushReplacement(
       context,
-      premiumRoute(VendorDashboard(
+      slideUpRoute(VendorDashboard(
         vendorName: data['vendor_name'] as String,
         company: data['company'] as String,
         sessionHours: (data['session_hours'] as num).toInt(),

@@ -8,13 +8,15 @@ import '../config/api_constants.dart';
 class AuthService {
   static const String _usernameKey = 'aeroguard_username';
   static const String _deviceIdKey = 'aeroguard_device_id_from_backend';
+  static const String _bioUsernameKey = 'aeroguard_bio_username';
+  static const String _bioPasswordKey = 'aeroguard_bio_password';
 
   static final _vault = const FlutterSecureStorage();
 
-  /// Authenticate against the central auth server (backend_central_auth:8001).
+  /// Authenticate against the central auth server (backend_central_auth:8000).
   static Future<AuthResponse> login(String username, String password) async {
     try {
-      // Login goes to central auth server (port 8001), not the gateway
+      // Login goes to central auth server (port 8000), not the gateway
       final uri = Uri.parse(ApiConstants.loginEndpoint);
 
       debugPrint('[*] Attempting login for user: $username');
@@ -37,7 +39,10 @@ class AuthService {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
 
         // Central auth returns: {status, username, role, device_id, token}
-        await _vault.write(key: _usernameKey, value: data['username'] ?? username);
+        await _vault.write(
+          key: _usernameKey,
+          value: data['username'] ?? username,
+        );
         await _vault.write(key: _deviceIdKey, value: data['device_id'] ?? '');
 
         debugPrint('[+] LOGIN SUCCESSFUL: ${data['username']}');
@@ -49,18 +54,62 @@ class AuthService {
           message: 'Authentication successful',
         );
       } else if (response.statusCode == 401) {
-        return AuthResponse(success: false, message: 'Invalid username or password');
+        return AuthResponse(
+          success: false,
+          message: 'Invalid username or password',
+        );
       } else {
-        return AuthResponse(success: false, message: 'Login failed: ${response.statusCode}');
+        return AuthResponse(
+          success: false,
+          message: 'Login failed: ${response.statusCode}',
+        );
       }
-    } catch (_) {
-      debugPrint('[-] Central auth unreachable. Check server connection.');
+    } catch (e) {
+      debugPrint('[-] Central auth unreachable: $e');
       return AuthResponse(
         success: false,
-        message: 'Cannot reach authentication server. Check your connection.',
+        message:
+            'Authentication server unreachable. Check your network and CENTRAL_AUTH_URL setting.',
       );
     }
   }
+
+  // ── Biometric credential storage ──────────────────────────────────────────
+
+  /// Save credentials so the biometric screen can log in automatically.
+  static Future<void> saveBiometricCredentials(
+    String username,
+    String password,
+  ) async {
+    await _vault.write(key: _bioUsernameKey, value: username);
+    await _vault.write(key: _bioPasswordKey, value: password);
+    debugPrint('[+] Biometric credentials saved for: $username');
+  }
+
+  /// Returns stored credentials or null if none saved.
+  static Future<Map<String, String>?> getBiometricCredentials() async {
+    final username = await _vault.read(key: _bioUsernameKey);
+    final password = await _vault.read(key: _bioPasswordKey);
+    if (username != null && password != null) {
+      return {'username': username, 'password': password};
+    }
+    return null;
+  }
+
+  /// True if biometric credentials have been saved on this device.
+  static Future<bool> hasBiometricCredentials() async {
+    final creds = await getBiometricCredentials();
+    return creds != null;
+  }
+
+  /// Remove saved biometric credentials (call on logout or manual revoke).
+  static Future<void> clearBiometricCredentials() async {
+    await _vault.delete(key: _bioUsernameKey);
+    await _vault.delete(key: _bioPasswordKey);
+    debugPrint('[+] Biometric credentials cleared');
+  }
+
+  // ── Session ──────────────────────────────────────────────────────────────
 
   /// Get currently authenticated username
   static Future<String?> getUsername() async {
@@ -78,10 +127,11 @@ class AuthService {
     return username != null && username.isNotEmpty;
   }
 
-  /// Logout and clear credentials
+  /// Logout — clears session and biometric credentials.
   static Future<void> logout() async {
     await _vault.delete(key: _usernameKey);
     await _vault.delete(key: _deviceIdKey);
+    await clearBiometricCredentials();
     debugPrint('[+] User logged out');
   }
 }
@@ -100,4 +150,3 @@ class AuthResponse {
     required this.message,
   });
 }
-

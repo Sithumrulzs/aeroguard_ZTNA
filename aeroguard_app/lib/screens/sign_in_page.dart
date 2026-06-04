@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../config/transitions.dart';
 import '../services/auth_service.dart';
+import '../services/biometric_service.dart';
 import '../services/enclave_service.dart';
 import 'admin_dashboard.dart';
 import 'vendor_scanner_screen.dart';
@@ -65,15 +66,23 @@ class _SignInPageState extends State<SignInPage>
 
       if (response.success) {
         final loggedInUsername = response.username ?? _userCtrl.text.trim();
+        final enteredPassword  = _passCtrl.text;
 
-        // Generate device ECDSA key pair on first login (no-op if already exists)
         await EnclaveService.initializeDevice(loggedInUsername);
 
-        // Clear inputs
         _userCtrl.clear();
         _passCtrl.clear();
 
-        // Navigate to dashboard
+        // Offer biometric save on first login if hardware is available
+        // and credentials haven't been saved before.
+        if (mounted) {
+          final bioAvailable  = await BiometricService.isAvailable();
+          final alreadySaved  = await AuthService.hasBiometricCredentials();
+          if (bioAvailable && !alreadySaved && mounted) {
+            await _promptBiometricSave(loggedInUsername, enteredPassword);
+          }
+        }
+
         if (mounted) {
           Navigator.pushReplacement(
             context,
@@ -89,6 +98,50 @@ class _SignInPageState extends State<SignInPage>
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _promptBiometricSave(String username, String password) async {
+    final save = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0D1421),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.fingerprint, color: Color(0xFF00C3FF), size: 22),
+            SizedBox(width: 10),
+            Text(
+              'Enable Biometric Login',
+              style: TextStyle(color: Colors.white, fontSize: 15),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Use your fingerprint to sign in automatically next time.',
+          style: TextStyle(color: Color(0xFFC0C7D4), fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('NOT NOW',
+                style: TextStyle(color: Color(0xFF475569), letterSpacing: 1.0)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('ENABLE',
+                style: TextStyle(
+                    color: Color(0xFF00C3FF),
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.0)),
+          ),
+        ],
+      ),
+    );
+
+    if (save == true) {
+      await AuthService.saveBiometricCredentials(username, password);
     }
   }
 
@@ -301,7 +354,7 @@ class _SignInPageState extends State<SignInPage>
                     GestureDetector(
                       onTap: () => Navigator.push(
                         context,
-                        premiumRoute(const VendorScannerScreen()),
+                        slideUpRoute(const VendorScannerScreen()),
                       ),
                       child: Container(
                         padding: const EdgeInsets.symmetric(

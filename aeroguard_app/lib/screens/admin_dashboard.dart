@@ -19,24 +19,55 @@ class AdminDashboard extends StatefulWidget {
   State<AdminDashboard> createState() => _AdminDashboardState();
 }
 
-class _AdminDashboardState extends State<AdminDashboard> {
+class _AdminDashboardState extends State<AdminDashboard>
+    with SingleTickerProviderStateMixin {
   int _index = 0;
+
+  late AnimationController _tabCtrl;
+  late Animation<double>   _tabFade;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+      value: 1.0,
+    );
+    _tabFade = CurvedAnimation(parent: _tabCtrl, curve: Curves.easeInOut);
+  }
+
+  @override
+  void dispose() {
+    _tabCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _switchTab(int i) async {
+    if (i == _index) return;
+    await _tabCtrl.reverse();
+    if (mounted) setState(() => _index = i);
+    _tabCtrl.forward();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF050810),
-      body: IndexedStack(
-        index: _index,
-        children: [
-          _OverviewTab(onLogout: _logout),
-          const _AccessTab(),
-          const _VaultTab(),
-        ],
+      body: FadeTransition(
+        opacity: _tabFade,
+        child: IndexedStack(
+          index: _index,
+          children: [
+            _OverviewTab(onLogout: _logout),
+            const _AccessTab(),
+            const _VaultTab(),
+          ],
+        ),
       ),
       bottomNavigationBar: _BottomNav(
         currentIndex: _index,
-        onTap: (i) => setState(() => _index = i),
+        onTap: _switchTab,
       ),
     );
   }
@@ -44,7 +75,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   void _logout() async {
     await AuthService.logout();
     if (mounted) {
-      Navigator.pushReplacement(context, premiumRoute(const SignInPage()));
+      Navigator.pushReplacement(context, fadeRoute(const SignInPage()));
     }
   }
 }
@@ -700,7 +731,7 @@ class _AccessTabState extends State<_AccessTab>
               GestureDetector(
                 onTap: () => Navigator.push(
                   context,
-                  premiumRoute(const ProvisionTokenScreen()),
+                  slideUpRoute(const ProvisionTokenScreen()),
                 ),
                 child: Container(
                   width: double.infinity,
@@ -1031,7 +1062,7 @@ class _VaultTab extends StatelessWidget {
                     GestureDetector(
                       onTap: () => Navigator.push(
                         context,
-                        premiumRoute(const DeviceIdentityScreen()),
+                        slideUpRoute(const DeviceIdentityScreen()),
                       ),
                       child: Container(
                         width: double.infinity,
@@ -1105,7 +1136,7 @@ class _VaultTab extends StatelessWidget {
                       subtitle: 'Generate JIT QR access',
                       onTap: () => Navigator.push(
                         context,
-                        premiumRoute(const ProvisionTokenScreen()),
+                        slideUpRoute(const ProvisionTokenScreen()),
                       ),
                     ),
                     Divider(

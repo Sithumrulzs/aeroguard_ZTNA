@@ -126,7 +126,7 @@ class _DeviceIdentityScreenState extends State<DeviceIdentityScreen>
               );
               Navigator.pushReplacement(
                 context,
-                premiumRoute(const SignInPage()),
+                slideBackRoute(const SignInPage()),
               );
             },
             child: const Text(

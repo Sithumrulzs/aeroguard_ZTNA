@@ -5,12 +5,12 @@
 ///
 /// Inject with:
 ///   flutter run --dart-define-from-file=.dart_defines/local.json
-///   flutter run --dart-define=GATEWAY_IP=192.168.1.45
+///   flutter run --dart-define=GATEWAY_IP
 class EnvironmentConfig {
   // ── Gateway coordinates ───────────────────────────────────────────────────
   static const String gatewayIp = String.fromEnvironment(
     'GATEWAY_IP',
-    defaultValue: '127.0.0.1', // safe fallback: localhost web testing
+    defaultValue: '192.168.100.130', // safe fallback: localhost web testing
   );
 
   static const String gatewayPort = String.fromEnvironment(
@@ -20,7 +20,7 @@ class EnvironmentConfig {
 
   // ── Derived URLs (computed from above — never hardcoded) ──────────────────
   static const String baseUrl = 'http://$gatewayIp:$gatewayPort/api/v1';
-  static const String knockEndpoint  = '$baseUrl/knock';
+  static const String knockEndpoint = '$baseUrl/knock';
   static const String vendorEndpoint = '$baseUrl/vendor_knock';
   static const String revokeEndpoint = '$baseUrl/device/revoke';
 

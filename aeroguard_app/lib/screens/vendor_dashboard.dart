@@ -100,7 +100,7 @@ class _VendorDashboardState extends State<VendorDashboard> {
                       const Spacer(),
                       GestureDetector(
                         onTap: () => Navigator.pushReplacement(
-                            context, premiumRoute(const SignInPage())),
+                            context, fadeRoute(const SignInPage())),
                         child: Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
@@ -256,7 +256,7 @@ class _VendorDashboardState extends State<VendorDashboard> {
                         onExpire: () {
                           if (mounted) {
                             Navigator.pushReplacement(
-                                context, premiumRoute(const SignInPage()));
+                                context, fadeRoute(const SignInPage()));
                           }
                         },
                       ),
