@@ -14,8 +14,6 @@ spec:
   
   # Deploy configuration
   deployment:
-    image: python:3.11-slim
-    buildpack: python
     dockerfile: |
       FROM python:3.11-slim
       WORKDIR /app
@@ -24,7 +22,7 @@ spec:
       COPY . .
       EXPOSE 8001
       CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
-    
+
     # Health check
     healthCheck:
       type: http
