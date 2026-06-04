@@ -2,21 +2,16 @@ apiVersion: core.choreo.dev/v1
 kind: Component
 metadata:
   name: backend-central-auth
-  description: AeroGuard ZTNA — Central Auth Service
+  description: AeroGuard ZTNA Central Auth Service
 spec:
   displayName: AeroGuard Central Auth
-  description: |
-    Central authentication and identity management service for AeroGuard ZTNA.
-    Handles admin login, vendor provisioning, audit logging, and dashboard APIs.
   type: service
   source:
-    git:
+    repository:
       url: https://github.com/Sithumrulzs/backend_central_auth.git
       ref: main
       context: .
-  
-  # Deploy configuration
-  deployment:
+  build:
     dockerfile: |
       FROM python:3.11-slim
       WORKDIR /app
@@ -25,134 +20,15 @@ spec:
       COPY . .
       EXPOSE 8001
       CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
-
-    # Health check
-    healthCheck:
-      type: http
-      endpoint: /health
-      initialDelaySeconds: 10
-      periodSeconds: 15
-    
-    # Resource limits
-    resources:
-      requests:
-        memory: 256Mi
-        cpu: 250m
-      limits:
-        memory: 512Mi
-        cpu: 500m
-
-  # Environment variables
-  environments:
-    development:
-      - name: DATABASE_URL
-        value: ${SUPABASE_DEV_CONNECTION_STRING}
-      - name: PORT
-        value: "8001"
-      - name: ENVIRONMENT
-        value: development
-    
-    production:
-      - name: DATABASE_URL
-        value: ${SUPABASE_PROD_CONNECTION_STRING}
-      - name: PORT
-        value: "8001"
-      - name: ENVIRONMENT
-        value: production
-
-  # API endpoints exposed
-  endpoints:
-    - name: root
-      path: /
-      method: GET
-      displayName: Service Status
-      description: Check if Central Auth service is online
-    
-    - name: health
-      path: /health
-      method: GET
-      displayName: Health Check
-      description: Readiness probe for container orchestration
-    
-    - name: login
-      path: /api/v1/auth/login
-      method: POST
-      displayName: Admin Login
-      description: Authenticate admin user with credentials
-      policies:
-        - rateLimit:
-            requestsPerMinute: 60
-        - cors:
-            allowedOrigins: ["*"]
-    
-    - name: ingestLog
-      path: /api/v1/logs/write
-      method: POST
-      displayName: Ingest Audit Log
-      description: Write audit logs to central SIEM archive
-      policies:
-        - rateLimit:
-            requestsPerMinute: 1000
-    
-    - name: provisionVendor
-      path: /api/v1/provision-vendor
-      method: POST
-      displayName: Provision Vendor
-      description: Create vendor session with JIT access
-      policies:
-        - rateLimit:
-            requestsPerMinute: 100
-    
-    - name: dashboardStats
-      path: /api/v1/dashboard/stats
-      method: GET
-      displayName: Dashboard Statistics
-      description: Retrieve dashboard metrics and KPIs
-      policies:
-        - rateLimit:
-            requestsPerMinute: 300
-    
-    - name: dashboardTelemetry
-      path: /api/v1/dashboard/telemetry
-      method: GET
-      displayName: Dashboard Telemetry
-      description: Get recent audit events and telemetry data
-      policies:
-        - rateLimit:
-            requestsPerMinute: 300
-
-  # Volumes for logs (optional)
-  volumes:
-    - name: audit-logs
-      path: /var/log/aeroguard
-      size: 1Gi
-      type: persistentVolumeClaim
-
-  # Secrets
-  secrets:
-    - name: DATABASE_URL
-      description: Supabase PostgreSQL connection string
-      scope: environment
-    - name: API_KEY
-      description: Optional API key for internal service-to-service auth
-      scope: environment
-
-  # Tags for discovery
-  tags:
-    - security
-    - ztna
-    - authentication
-    - central-auth
-    - choreo
-  
-  # Documentation
-  documentation:
-    readme: README.md
-    openapi: swagger.yaml
-
-  # Scaling policy
-  scaling:
-    minReplicas: 1
-    maxReplicas: 3
-    targetCPUUtilization: 70
-    targetMemoryUtilization: 80
+  healthCheck:
+    type: http
+    endpoint: /health
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
