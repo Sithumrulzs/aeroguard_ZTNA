@@ -39,6 +39,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Temporary mobile login override ───────────────────────────────────────────
+# This block is temporary and can be removed once mobile app credential
+# handling is migrated back to Supabase user authentication.
+HARD_CODED_MOBILE_LOGIN_ENABLED = True
+HARDCODED_ADMIN_CREDENTIALS = {
+    "admin": "admin-admin",
+    "dulen.it": "DulenTemp#1",
+    "dulshi.it": "IT@ds69",
+    "sithum.it": "IT@kss69",
+    "yasas.it": "It@syl69",
+}
+
 
 # ── Database connection ───────────────────────────────────────────────────────
 @contextmanager
@@ -136,32 +148,50 @@ async def central_login(payload: LoginRequest, request: Request):
 
     print(f"\n[AEROGUARD LIVE TRACE] Querying DB dynamically for user: '{username_clean}'")
 
-    try:
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM public.users WHERE username = %s", (username_clean,))
-                user = cur.fetchone()
-        print(f"[AEROGUARD LIVE TRACE] Step 1 Complete -> Database query executed. Row found: {user is not None}")
-    except Exception as e:
-        print(f"[AEROGUARD LIVE TRACE] Step 1 FAILED -> DB Query broken: {e}")
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-    # Verify bcrypt password against fetched database row credentials dynamically
+    # Temporary mobile app credential override.
+    # Remove this block once mobile auth is fully managed by Supabase.
+    user = None
     password_valid = False
-    if user:
-        print(f"[AEROGUARD LIVE TRACE] Step 2 Complete -> Hash found in table. Running raw bcrypt calculation...")
-        try:
-            stored_hash = user["password_hash"]
-            stored_hash_bytes = stored_hash.encode('utf-8') if isinstance(stored_hash, str) else stored_hash
 
-            password_valid = bcrypt.checkpw(
-                password_clean.encode('utf-8'),
-                stored_hash_bytes
-            )
-            print(f"[AEROGUARD LIVE TRACE] Step 3 Complete -> Cryptographic match result: {password_valid}")
-        except Exception as crypto_err:
-            print(f"[AEROGUARD LIVE TRACE] Step 3 FAILED -> Bcrypt execution crashed: {crypto_err}")
-            password_valid = False
+    if HARD_CODED_MOBILE_LOGIN_ENABLED and username_clean in HARDCODED_ADMIN_CREDENTIALS:
+        if password_clean == HARDCODED_ADMIN_CREDENTIALS[username_clean]:
+            user = {
+                "username": username_clean,
+                "role": "admin",
+                "device_id": "temporary_mobile_login",
+                "password_hash": None,
+            }
+            password_valid = True
+            print(f"[AEROGUARD LIVE TRACE] Temporary hardcoded admin login accepted for '{username_clean}'")
+        else:
+            print(f"[AEROGUARD LIVE TRACE] Temporary hardcoded admin login failed for '{username_clean}'")
+
+    if not password_valid:
+        try:
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT * FROM public.users WHERE username = %s", (username_clean,))
+                    user = cur.fetchone()
+            print(f"[AEROGUARD LIVE TRACE] Step 1 Complete -> Database query executed. Row found: {user is not None}")
+        except Exception as e:
+            print(f"[AEROGUARD LIVE TRACE] Step 1 FAILED -> DB Query broken: {e}")
+            raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+        # Verify bcrypt password against fetched database row credentials dynamically
+        if user:
+            print(f"[AEROGUARD LIVE TRACE] Step 2 Complete -> Hash found in table. Running raw bcrypt calculation...")
+            try:
+                stored_hash = user["password_hash"]
+                stored_hash_bytes = stored_hash.encode('utf-8') if isinstance(stored_hash, str) else stored_hash
+
+                password_valid = bcrypt.checkpw(
+                    password_clean.encode('utf-8'),
+                    stored_hash_bytes
+                )
+                print(f"[AEROGUARD LIVE TRACE] Step 3 Complete -> Cryptographic match result: {password_valid}")
+            except Exception as crypto_err:
+                print(f"[AEROGUARD LIVE TRACE] Step 3 FAILED -> Bcrypt execution crashed: {crypto_err}")
+                password_valid = False
 
     if not user or not password_valid:
         insert_audit("APP_LOGIN", username_clean, client_ip, "DENIED", "Invalid credentials.")
