@@ -63,7 +63,7 @@ def insert_audit(event_type: str, username: str, client_ip: str,
                 # Let PostgreSQL handle the created_at column natively using its own rules.
                 # This prevents ISO format mismatches from breaking the transaction silently.
                 cur.execute(
-                    """INSERT INTO audit_logs
+                    """INSERT INTO public.audit_logs
                        (event_type, username, client_ip, status, details)
                        VALUES (%s, %s, %s, %s, %s)""",
                     (event_type, username, client_ip, status_val, details)
@@ -139,7 +139,7 @@ async def central_login(payload: LoginRequest, request: Request):
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM users WHERE username = %s", (username_clean,))
+                cur.execute("SELECT * FROM public.users WHERE username = %s", (username_clean,))
                 user = cur.fetchone()
         print(f"[AEROGUARD LIVE TRACE] Step 1 Complete -> Database query executed. Row found: {user is not None}")
     except Exception as e:
@@ -151,9 +151,12 @@ async def central_login(payload: LoginRequest, request: Request):
     if user:
         print(f"[AEROGUARD LIVE TRACE] Step 2 Complete -> Hash found in table. Running raw bcrypt calculation...")
         try:
+            stored_hash = user["password_hash"]
+            stored_hash_bytes = stored_hash.encode('utf-8') if isinstance(stored_hash, str) else stored_hash
+
             password_valid = bcrypt.checkpw(
-                password_clean.encode(),
-                user["password_hash"].encode()
+                password_clean.encode('utf-8'),
+                stored_hash_bytes
             )
             print(f"[AEROGUARD LIVE TRACE] Step 3 Complete -> Cryptographic match result: {password_valid}")
         except Exception as crypto_err:
@@ -193,9 +196,9 @@ async def provision_vendor(payload: VendorProvisionPayload):
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
-                # Upsert vendor identity into users
+                # Upsert vendor identity into public.users
                 cur.execute(
-                    """INSERT INTO users (username, password_hash, role, device_id,
+                    """INSERT INTO public.users (username, password_hash, role, device_id,
                                          public_key_pem, locked_mac)
                        VALUES (%s, %s, 'vendor', %s, %s, '')
                        ON CONFLICT (username) DO UPDATE
@@ -208,9 +211,9 @@ async def provision_vendor(payload: VendorProvisionPayload):
                      "dummy_key_until_scanned")
                 )
 
-                # Insert vendor session
+                # Insert vendor session into public.vendor_sessions
                 cur.execute(
-                    """INSERT INTO vendor_sessions
+                    """INSERT INTO public.vendor_sessions
                        (qr_token, vendor_username, company_name,
                         clearance_level, status, valid_until)
                        VALUES (%s, %s, %s, %s, 'pending', %s)""",
@@ -235,14 +238,14 @@ async def dashboard_stats():
         with get_db() as conn:
             with conn.cursor() as cur:
                 # Active admins
-                cur.execute("SELECT username FROM users WHERE role = 'admin'")
+                cur.execute("SELECT username FROM public.users WHERE role = 'admin'")
                 admins      = cur.fetchall()
                 admin_names = [r["username"] for r in admins]
 
                 # Active vendors (unexpired sessions)
                 now = datetime.now(timezone.utc).isoformat()
                 cur.execute(
-                    "SELECT DISTINCT vendor_username FROM vendor_sessions "
+                    "SELECT DISTINCT vendor_username FROM public.vendor_sessions "
                     "WHERE valid_until > %s AND status != 'expired'", (now,)
                 )
                 active_vendors = cur.fetchall()
@@ -250,7 +253,7 @@ async def dashboard_stats():
                 # Successful ZTNA knocks today
                 today = datetime.now(timezone.utc).date().isoformat()
                 cur.execute(
-                    "SELECT COUNT(*) AS cnt FROM audit_logs "
+                    "SELECT COUNT(*) AS cnt FROM public.audit_logs "
                     "WHERE event_type = 'ZTNA_KNOCK' AND status = 'GRANTED' "
                     "AND created_at >= %s", (today,)
                 )
@@ -275,18 +278,18 @@ async def dashboard_telemetry(limit: int = 10):
                 # Recent audit events
                 cur.execute(
                     "SELECT event_type, username, client_ip, status, details, created_at "
-                    "FROM audit_logs ORDER BY created_at DESC LIMIT %s", (limit,)
+                    "FROM public.audit_logs ORDER BY created_at DESC LIMIT %s", (limit,)
                 )
                 events = cur.fetchall()
 
                 # Active admins
-                cur.execute("SELECT username FROM users WHERE role = 'admin'")
+                cur.execute("SELECT username FROM public.users WHERE role = 'admin'")
                 admin_names = [r["username"] for r in cur.fetchall()]
 
                 # Active vendors
                 now = datetime.now(timezone.utc).isoformat()
                 cur.execute(
-                    "SELECT DISTINCT vendor_username FROM vendor_sessions "
+                    "SELECT DISTINCT vendor_username FROM public.vendor_sessions "
                     "WHERE valid_until > %s AND status != 'expired'", (now,)
                 )
                 vendor_names = [r["vendor_username"] for r in cur.fetchall()]
