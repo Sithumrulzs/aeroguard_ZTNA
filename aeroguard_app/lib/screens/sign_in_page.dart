@@ -57,16 +57,18 @@ class _SignInPageState extends State<SignInPage>
     setState(() => _isLoading = true);
 
     try {
-      final response = await AuthService.login(
-        _userCtrl.text.trim(),
-        _passCtrl.text,
-      );
+      // 1. Explicitly trim the username and store it in a clean variable
+      final trimmedUsername = _userCtrl.text.trim();
+
+      // 2. Use the cleaned variable for the login request
+      final response = await AuthService.login(trimmedUsername, _passCtrl.text);
 
       if (!mounted) return;
 
       if (response.success) {
-        final loggedInUsername = response.username ?? _userCtrl.text.trim();
-        final enteredPassword  = _passCtrl.text;
+        // 3. Ensure the cleaned variable goes into the Secure Enclave
+        final loggedInUsername = response.username ?? trimmedUsername;
+        final enteredPassword = _passCtrl.text;
 
         await EnclaveService.initializeDevice(loggedInUsername);
 
@@ -76,8 +78,8 @@ class _SignInPageState extends State<SignInPage>
         // Offer biometric save on first login if hardware is available
         // and credentials haven't been saved before.
         if (mounted) {
-          final bioAvailable  = await BiometricService.isAvailable();
-          final alreadySaved  = await AuthService.hasBiometricCredentials();
+          final bioAvailable = await BiometricService.isAvailable();
+          final alreadySaved = await AuthService.hasBiometricCredentials();
           if (bioAvailable && !alreadySaved && mounted) {
             await _promptBiometricSave(loggedInUsername, enteredPassword);
           }
@@ -125,16 +127,21 @@ class _SignInPageState extends State<SignInPage>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('NOT NOW',
-                style: TextStyle(color: Color(0xFF475569), letterSpacing: 1.0)),
+            child: const Text(
+              'NOT NOW',
+              style: TextStyle(color: Color(0xFF475569), letterSpacing: 1.0),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('ENABLE',
-                style: TextStyle(
-                    color: Color(0xFF00C3FF),
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.0)),
+            child: const Text(
+              'ENABLE',
+              style: TextStyle(
+                color: Color(0xFF00C3FF),
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.0,
+              ),
+            ),
           ),
         ],
       ),
