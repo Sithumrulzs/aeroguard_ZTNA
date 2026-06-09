@@ -188,14 +188,19 @@ async def register_device(payload: RegisterDevicePayload, request: Request):
     client_ip = request.client.host
     username  = payload.username.strip()
 
-    # Placeholder values written by seed scripts — treated as unbound.
-    DUMMY_KEYS = {"dummy_key_until_flutter_is_connected", "dummy_key_until_scanned", ""}
+    # Placeholder values written by seed/admin scripts — treated as unbound.
+    DUMMY_KEYS = {
+        "dummy_key_until_flutter_is_connected",
+        "dummy_key_until_scanned",
+        "manual_admin_provision",
+        "",
+    }
 
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT public_key_pem FROM public.users WHERE username = %s",
+                    "SELECT public_key_pem, device_id FROM public.users WHERE username = %s",
                     (username,)
                 )
                 row = cur.fetchone()
@@ -205,14 +210,31 @@ async def register_device(payload: RegisterDevicePayload, request: Request):
     if not row:
         raise HTTPException(status_code=404, detail="User not found.")
 
-    existing_key = row["public_key_pem"] or ""
+    existing_key    = row["public_key_pem"] or ""
+    existing_device = row["device_id"]      or ""
 
-    # TOFU lock — reject if a real key is already bound to this account.
-    if existing_key and existing_key not in DUMMY_KEYS:
+    # ── TOFU decision tree ────────────────────────────────────────────────────
+    if not existing_key or existing_key in DUMMY_KEYS:
+        # Slot is empty/placeholder → bind freely.
+        pass
+
+    elif existing_key == payload.public_key_pem:
+        # Exact same key → same device re-logging in (idempotent).
+        insert_audit("DEVICE_BIND", username, client_ip, "SKIP",
+                     f"Device already registered. ID: {payload.device_id}")
+        return {"status": "already_registered", "message": "Device already registered."}
+
+    elif existing_device and existing_device == payload.device_id:
+        # Same device_id but key refreshed (e.g. app reinstall) → allow re-bind.
+        pass
+
+    else:
+        # Genuinely different device — TOFU violation.
         insert_audit("DEVICE_BIND", username, client_ip, "DENIED",
-                     "Account already bound to a device.")
+                     f"Account already bound to a different device. Stored: {existing_device}")
         raise HTTPException(status_code=403,
                             detail="Account already bound to a device.")
+    # ─────────────────────────────────────────────────────────────────────────
 
     try:
         with get_db() as conn:

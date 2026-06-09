@@ -147,9 +147,19 @@ paths:
                   example: 04a1b2c3...
       responses:
         "200":
-          description: Device bound successfully
+          description: Device bound (or already registered — idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [bound, already_registered]
+                  message:
+                    type: string
         "403":
-          description: Account already bound to a different device
+          description: Account already bound to a different device (TOFU violation)
         "404":
           description: User not found
 

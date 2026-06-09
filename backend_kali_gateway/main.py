@@ -164,7 +164,7 @@ def log_audit(event_type: str, username: str, status: str,
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO audit_logs
+                    """INSERT INTO public.audit_logs
                        (event_type, username, client_ip, status, details, created_at)
                        VALUES (%s, %s, %s, %s, %s, %s)""",
                     (event_type, username, ip, status,
@@ -206,13 +206,13 @@ async def provision_vendor(payload: VendorProvisionPayload, request: Request):
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id FROM vendor_sessions WHERE qr_token = %s",
+                cur.execute("SELECT id FROM public.vendor_sessions WHERE qr_token = %s",
                             (payload.token_hash,))
                 if cur.fetchone():
                     raise HTTPException(status_code=409, detail="Token already provisioned.")
 
                 cur.execute(
-                    """INSERT INTO vendor_sessions
+                    """INSERT INTO public.vendor_sessions
                        (qr_token, vendor_username, company_name, clearance_level, status, valid_until)
                        VALUES (%s, %s, %s, %s, 'pending', %s)""",
                     (payload.token_hash, payload.vendor_name, payload.company,
@@ -241,7 +241,7 @@ async def vendor_knock(payload: VendorKnockPayload, request: Request):
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT * FROM vendor_sessions "
+                    "SELECT * FROM public.vendor_sessions "
                     "WHERE qr_token = %s AND status != 'expired'",
                     (payload.token_hash,)
                 )
@@ -262,7 +262,7 @@ async def vendor_knock(payload: VendorKnockPayload, request: Request):
         if datetime.now(timezone.utc) > expiry:
             with get_db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE vendor_sessions SET status = 'expired' WHERE qr_token = %s",
+                    cur.execute("UPDATE public.vendor_sessions SET status = 'expired' WHERE qr_token = %s",
                                 (payload.token_hash,))
             log_audit("VENDOR_KNOCK", payload.vendor_name, "DENIED - SESSION EXPIRED",
                       client_ip, {"valid_until": str(valid_until)})
@@ -273,11 +273,13 @@ async def vendor_knock(payload: VendorKnockPayload, request: Request):
         raise HTTPException(status_code=500, detail="Corrupt session timestamp.")
 
     # 3. Hardware footprint (Trust-on-First-Knock)
+    # Use vendor_username from the session row (DB key) not the display name.
+    vendor_db_username = session["vendor_username"]
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT locked_mac FROM users WHERE username = %s",
-                            (payload.vendor_name,))
+                cur.execute("SELECT locked_mac FROM public.users WHERE username = %s",
+                            (vendor_db_username,))
                 user = cur.fetchone()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
@@ -287,9 +289,9 @@ async def vendor_knock(payload: VendorKnockPayload, request: Request):
     if not locked_mac.strip():
         with get_db() as conn:
             with conn.cursor() as cur:
-                cur.execute("UPDATE users SET locked_mac = %s WHERE username = %s",
-                            (client_ip, payload.vendor_name))
-                cur.execute("UPDATE vendor_sessions SET status = 'active' WHERE qr_token = %s",
+                cur.execute("UPDATE public.users SET locked_mac = %s WHERE username = %s",
+                            (client_ip, vendor_db_username))
+                cur.execute("UPDATE public.vendor_sessions SET status = 'active' WHERE qr_token = %s",
                             (payload.token_hash,))
         locked_mac = client_ip
         print(f"[+] VENDOR FIRST KNOCK: {client_ip} bound to {payload.vendor_name}")
