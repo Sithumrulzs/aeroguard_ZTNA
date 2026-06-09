@@ -8,6 +8,7 @@ Credentials are loaded from .env — never hardcoded.
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from fastapi.openapi.docs import get_swagger_ui_html
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from typing import Optional
@@ -82,21 +83,17 @@ app = FastAPI(
     description="Identity, login, vendor provisioning and SIEM dashboard.",
     version="1.0.0",
     lifespan=lifespan,
-
-    # 1. Tells routing we are behind a proxy path
-    root_path="/default/backendcentralauth/v1.0",
-    
-    # 2. Forces Swagger to look in the exact right place for the JSON map
-    openapi_url="/default/backendcentralauth/v1.0/openapi.json",
-    
-    # 3. Hardcodes the absolute URL for the "Execute" button
-    servers=[
-        {
-            "url": "https://69e1efef-e429-472f-bfce-68e0ac0360ff-dev.e1-us-east-azure.choreoapis.dev/default/backendcentralauth/v1.0", 
-            "description": "Choreo Production Gateway"
-        }
-    ]
+    docs_url=None, 
+    redoc_url=None
+  
 )
+# Build a custom page that uses the absolute internet URL
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url="https://69e1efef-e429-472f-bfce-68e0ac0360ff-dev.e1-us-east-azure.choreoapis.dev/default/backendcentralauth/v1.0/openapi.json",
+        title="AeroGuard Swagger UI"
+    )
 
 app.add_middleware(
     CORSMiddleware,
