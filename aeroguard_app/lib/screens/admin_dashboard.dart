@@ -210,10 +210,14 @@ class _OverviewTab extends StatefulWidget {
 class _OverviewTabState extends State<_OverviewTab> {
   Timer? _timer;
   String _username       = 'ADMIN';
-  String _activeAdmins   = '—';
-  String _activeVendors  = '—';
-  String _totalKnocks    = '—';
+  bool   _loadingStats   = true;
+  bool   _statsError     = false;
+  String _activeAdmins   = '0';
+  String _activeVendors  = '0';
+  String _totalKnocks    = '0';
   String _gatewayStatus  = '—';
+  List<String> _adminNames  = [];
+  List<String> _vendorNames = [];
 
   @override
   void initState() {
@@ -239,19 +243,25 @@ class _OverviewTabState extends State<_OverviewTab> {
     try {
       final response = await http
           .get(Uri.parse(ApiConstants.dashboardStatsEndpoint))
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 25));
       if (!mounted) return;
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         setState(() {
-          _activeAdmins  = '${data['active_admins']  ?? '—'}';
-          _activeVendors = '${data['active_vendors']  ?? '—'}';
-          _totalKnocks   = '${data['total_knocks_today'] ?? '—'}';
+          _activeAdmins  = '${data['active_admins']  ?? 0}';
+          _activeVendors = '${data['active_vendors']  ?? 0}';
+          _totalKnocks   = '${data['total_knocks_today'] ?? 0}';
           _gatewayStatus = data['gateway_status'] ?? 'SECURED';
+          _adminNames    = List<String>.from(data['admin_names']  ?? []);
+          _vendorNames   = List<String>.from(data['vendor_names'] ?? []);
+          _loadingStats  = false;
+          _statsError    = false;
         });
+      } else {
+        if (mounted) setState(() { _statsError = true; _loadingStats = false; });
       }
     } catch (_) {
-      // Silently keep previous values on network error
+      if (mounted) setState(() { _statsError = true; _loadingStats = false; });
     }
   }
 
@@ -325,27 +335,33 @@ class _OverviewTabState extends State<_OverviewTab> {
                       crossAxisCount: 2,
                       mainAxisSpacing: 12,
                       crossAxisSpacing: 12,
-                      childAspectRatio: 1.65,
+                      childAspectRatio: 1.25,
                       children: [
                         _MetricCard(
                           label: 'ACTIVE ADMINS',
                           value: _activeAdmins,
                           icon: Icons.person_outline_rounded,
+                          names: _adminNames,
+                          isLoading: _loadingStats,
                         ),
                         _MetricCard(
                           label: 'ACTIVE VENDORS',
                           value: _activeVendors,
                           icon: Icons.people_outline_rounded,
+                          names: _vendorNames,
+                          isLoading: _loadingStats,
                         ),
                         _MetricCard(
                           label: 'KNOCKS TODAY',
                           value: _totalKnocks,
                           icon: Icons.data_usage_outlined,
+                          isLoading: _loadingStats,
                         ),
                         _MetricCard(
                           label: 'GATEWAY',
-                          value: _gatewayStatus,
+                          value: _statsError ? 'ERR' : _gatewayStatus,
                           icon: Icons.shield_outlined,
+                          isLoading: _loadingStats,
                         ),
                       ],
                     ),
@@ -435,17 +451,21 @@ class _MetricCard extends StatelessWidget {
   final String label;
   final String value;
   final IconData icon;
+  final List<String> names;
+  final bool isLoading;
 
   const _MetricCard({
     required this.label,
     required this.value,
     required this.icon,
+    this.names = const [],
+    this.isLoading = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFF0D1421),
         borderRadius: BorderRadius.circular(16),
@@ -465,14 +485,29 @@ class _MetricCard extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                value,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
+              if (isLoading)
+                const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00C3FF)),
+                  ),
+                )
+              else
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
-              ),
+              const SizedBox(height: 2),
               Text(
                 label,
                 style: const TextStyle(
@@ -482,6 +517,19 @@ class _MetricCard extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+              if (names.isNotEmpty && !isLoading) ...[
+                const SizedBox(height: 4),
+                Text(
+                  names.join('  ·  '),
+                  style: const TextStyle(
+                    color: Color(0xFF00C3FF),
+                    fontSize: 9,
+                    letterSpacing: 0.3,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ],
           ),
         ],

@@ -42,7 +42,7 @@ class _LiveTelemetryPanelState extends State<LiveTelemetryPanel> {
     try {
       final response = await http
           .get(Uri.parse(ApiConstants.dashboardTelemetryEndpoint))
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 25));
 
       if (!mounted) return;
 
@@ -65,10 +65,10 @@ class _LiveTelemetryPanelState extends State<LiveTelemetryPanel> {
           _gatewayStatus = data['gateway_status'] ?? 'SECURED';
           _adminLabel    = adminNames.isEmpty
               ? '$_activeAdmins · None'
-              : '$_activeAdmins · ${adminNames.first}';
+              : '$_activeAdmins · ${adminNames.join(', ')}';
           _vendorLabel   = vendorNames.isEmpty
               ? '$_activeVendors · Idle'
-              : '$_activeVendors · ${vendorNames.first}';
+              : '$_activeVendors · ${vendorNames.join(', ')}';
           _lastEvent     = lastEvent;
           _loading       = false;
           _error         = false;

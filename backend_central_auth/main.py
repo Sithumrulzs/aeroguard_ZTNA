@@ -171,6 +171,17 @@ async def central_login(payload: LoginRequest, request: Request):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="Access Denied: Invalid credentials.")
 
+    # Track last login time so the dashboard can show "active" admins
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE public.users SET last_login_at = NOW() WHERE username = %s",
+                    (username_clean,)
+                )
+    except Exception as e:
+        print(f"[!] last_login_at update skipped: {e}")
+
     insert_audit("APP_LOGIN", username_clean, client_ip, "SUCCESS", f"Login successful. Role: {user['role']}")
     print(f"[AEROGUARD LIVE TRACE] SUCCESS -> Access Granted dynamically to administrator workspace: '{username_clean}'\n")
 
@@ -350,23 +361,50 @@ async def provision_vendor(payload: VendorProvisionPayload):
 @app.get("/api/v1/dashboard/stats")
 async def dashboard_stats():
     try:
+        # ── Active admins: logged in within last 24 h ─────────────────────────
+        # Falls back to all admin accounts if last_login_at column not yet added.
+        try:
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT username FROM public.users "
+                        "WHERE role IN ('admin', 'superadmin') "
+                        "AND last_login_at IS NOT NULL "
+                        "AND last_login_at > NOW() - INTERVAL '24 hours' "
+                        "ORDER BY last_login_at DESC"
+                    )
+                    rows = cur.fetchall()
+                    if not rows:
+                        # No recent logins yet — return all registered admins
+                        cur.execute(
+                            "SELECT username FROM public.users "
+                            "WHERE role IN ('admin', 'superadmin')"
+                        )
+                        rows = cur.fetchall()
+                    admin_names = [r["username"] for r in rows]
+        except Exception:
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT username FROM public.users "
+                        "WHERE role IN ('admin', 'superadmin')"
+                    )
+                    admin_names = [r["username"] for r in cur.fetchall()]
+
+        # ── Active vendors ────────────────────────────────────────────────────
+        now = datetime.now(timezone.utc).isoformat()
         with get_db() as conn:
             with conn.cursor() as cur:
-                # Active admins
-                cur.execute("SELECT username FROM public.users WHERE role = 'admin'")
-                admins      = cur.fetchall()
-                admin_names = [r["username"] for r in admins]
-
-                # Active vendors (unexpired sessions)
-                now = datetime.now(timezone.utc).isoformat()
                 cur.execute(
                     "SELECT DISTINCT vendor_username FROM public.vendor_sessions "
                     "WHERE valid_until > %s AND status != 'expired'", (now,)
                 )
-                active_vendors = cur.fetchall()
+                vendor_names = [r["vendor_username"] for r in cur.fetchall()]
 
-                # Successful ZTNA knocks today
-                today = datetime.now(timezone.utc).date().isoformat()
+        # ── Knocks today ──────────────────────────────────────────────────────
+        today = datetime.now(timezone.utc).date().isoformat()
+        with get_db() as conn:
+            with conn.cursor() as cur:
                 cur.execute(
                     "SELECT COUNT(*) AS cnt FROM public.audit_logs "
                     "WHERE event_type = 'ZTNA_KNOCK' AND status = 'GRANTED' "
@@ -377,7 +415,8 @@ async def dashboard_stats():
         return {
             "active_admins":      len(admin_names),
             "admin_names":        admin_names,
-            "active_vendors":     len(active_vendors),
+            "active_vendors":     len(vendor_names),
+            "vendor_names":       vendor_names,
             "total_knocks_today": knocks,
             "gateway_status":     "SECURED",
         }
