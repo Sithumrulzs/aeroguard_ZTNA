@@ -23,6 +23,10 @@ class ApiConstants {
       "$centralAuthUrl/api/v1/dashboard/stats";
   static const String dashboardTelemetryEndpoint =
       "$centralAuthUrl/api/v1/dashboard/telemetry";
+  static const String vendorSessionsEndpoint =
+      "$centralAuthUrl/api/v1/dashboard/vendor-sessions";
+  static const String revokeVendorEndpoint =
+      "$centralAuthUrl/api/v1/admin/revoke-vendor";
 
   // ——— Timeouts ———
   static const int connectionTimeoutSeconds = 15;

@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_constants.dart';
 import '../config/transitions.dart';
 import '../services/auth_service.dart';
+import '../services/enclave_service.dart';
 import '../widgets/live_telemetry_panel.dart';
 import '../services/network_service.dart';
 import 'sign_in_page.dart';
@@ -999,8 +1000,153 @@ class _KnockButtonState extends State<_KnockButton>
 // ─────────────────────────────────────────────────────────────────────────────
 // TAB 3 — VAULT
 // ─────────────────────────────────────────────────────────────────────────────
-class _VaultTab extends StatelessWidget {
+class _VaultTab extends StatefulWidget {
   const _VaultTab();
+
+  @override
+  State<_VaultTab> createState() => _VaultTabState();
+}
+
+class _VaultTabState extends State<_VaultTab> {
+  Timer?  _timer;
+  bool    _loading     = true;
+  bool    _error       = false;
+  String  _deviceId    = '—';
+  String? _lastKnockAt;
+  List<Map<String, dynamic>> _sessions = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDeviceId();
+    _fetchVaultData();
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _fetchVaultData());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadDeviceId() async {
+    final id = await EnclaveService.getDeviceId();
+    if (mounted) setState(() => _deviceId = id);
+  }
+
+  Future<void> _fetchVaultData() async {
+    try {
+      final res = await http
+          .get(Uri.parse(ApiConstants.vendorSessionsEndpoint))
+          .timeout(const Duration(seconds: 25));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        setState(() {
+          _sessions    = List<Map<String, dynamic>>.from(data['sessions'] ?? []);
+          _lastKnockAt = data['last_knock_at'] as String?;
+          _loading     = false;
+          _error       = false;
+        });
+      } else {
+        if (mounted) setState(() { _error = true; _loading = false; });
+      }
+    } catch (_) {
+      if (mounted) setState(() { _error = true; _loading = false; });
+    }
+  }
+
+  Future<void> _revokeVendor(Map<String, dynamic> session) async {
+    final vendorUsername = session['vendor_username']?.toString() ?? '—';
+    final company        = session['company_name']?.toString()    ?? vendorUsername;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0D1421),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('REVOKE SESSION?',
+            style: TextStyle(color: Color(0xFFEF4444), fontSize: 14, letterSpacing: 2.0, fontWeight: FontWeight.bold)),
+        content: Text(
+          'Terminate the active tunnel for $company? This will immediately cut their network access.',
+          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('CANCEL', style: TextStyle(color: Color(0xFF475569), letterSpacing: 1.0)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('REVOKE', style: TextStyle(color: Color(0xFFEF4444), letterSpacing: 1.0, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final adminUsername = await AuthService.getUsername() ?? 'admin';
+      final res = await http.post(
+        Uri.parse(ApiConstants.revokeVendorEndpoint),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'admin_username': adminUsername, 'vendor_username': vendorUsername}),
+      ).timeout(const Duration(seconds: 15));
+
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('$company session revoked.',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+        ));
+        _fetchVaultData();
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Revoke failed — check connection.',
+              style: TextStyle(color: Colors.white, fontSize: 13)),
+          backgroundColor: const Color(0xFF334155),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+        ));
+      }
+    }
+  }
+
+  String _timeRemaining(String? validUntil) {
+    if (validUntil == null) return '—';
+    try {
+      final expiry    = DateTime.parse(validUntil).toUtc();
+      final remaining = expiry.difference(DateTime.now().toUtc());
+      if (remaining.isNegative) return 'EXPIRED';
+      if (remaining.inHours > 0) {
+        return '${remaining.inHours}h ${remaining.inMinutes.remainder(60)}m remaining';
+      }
+      return '${remaining.inMinutes}m ${remaining.inSeconds.remainder(60)}s remaining';
+    } catch (_) {
+      return '—';
+    }
+  }
+
+  String _formatTimestamp(String? iso) {
+    if (iso == null) return 'No events recorded';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      return '${months[dt.month - 1]} ${dt.day}  ·  $h:$m';
+    } catch (_) {
+      return '—';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1019,192 +1165,270 @@ class _VaultTab extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 24),
-              const Text(
-                'HARDWARE VAULT',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.5,
-                ),
-              ),
+              const Text('HARDWARE VAULT',
+                  style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
               const SizedBox(height: 4),
-              Text(
-                'Device cryptographic identity',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.3),
-                  fontSize: 12,
-                ),
-              ),
-              const SizedBox(height: 28),
+              Text('Device identity & active sessions',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 12)),
+              const SizedBox(height: 20),
 
-              // Identity card
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D1421),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: const Color(0xFF00C3FF).withValues(alpha: 0.1),
+              // ── Secure Enclave ──────────────────────────────────────────
+              _card(
+                borderColor: const Color(0xFF00C3FF).withValues(alpha: 0.1),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    _iconBox(Icons.memory, const Color(0xFF00C3FF)),
+                    const SizedBox(width: 14),
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('SECURE ENCLAVE',
+                          style: TextStyle(color: Color(0xFF475569), fontSize: 10, letterSpacing: 1.5, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text(_deviceId,
+                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                    ]),
+                  ]),
+                  Divider(color: Colors.white.withValues(alpha: 0.05), height: 24),
+                  Text('ECDSA P-256 key pair locked in hardware vault.',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11, height: 1.5)),
+                  const SizedBox(height: 16),
+                  GestureDetector(
+                    onTap: () => Navigator.push(context, slideUpRoute(const DeviceIdentityScreen())),
+                    child: _outlineBtn('VIEW FULL IDENTITY', Icons.vpn_key_outlined, const Color(0xFF00C3FF)),
                   ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: const Color(
-                              0xFF00C3FF,
-                            ).withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Icon(
-                            Icons.memory,
-                            color: Color(0xFF00C3FF),
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        const Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'SECURE ENCLAVE',
-                              style: TextStyle(
-                                color: Color(0xFF475569),
-                                fontSize: 10,
-                                letterSpacing: 1.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'admin_sithum_mobile_1',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                ]),
+              ),
+
+              const SizedBox(height: 12),
+
+              // ── Last knock event ────────────────────────────────────────
+              _card(
+                borderColor: const Color(0xFF00C3FF).withValues(alpha: 0.08),
+                child: Row(children: [
+                  _iconBox(Icons.bolt_outlined, const Color(0xFF00C3FF)),
+                  const SizedBox(width: 14),
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('LAST KNOCK EVENT',
+                        style: TextStyle(color: Color(0xFF475569), fontSize: 10, letterSpacing: 1.5, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    _loading
+                        ? const SizedBox(height: 14, width: 14,
+                            child: CircularProgressIndicator(strokeWidth: 1.5,
+                                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00C3FF))))
+                        : Text(_formatTimestamp(_lastKnockAt),
+                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                  ]),
+                ]),
+              ),
+
+              const SizedBox(height: 12),
+
+              // ── Active vendor sessions ──────────────────────────────────
+              _card(
+                borderColor: Colors.orangeAccent.withValues(alpha: 0.15),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    _iconBox(Icons.people_outline_rounded, Colors.orangeAccent),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Text('ACTIVE VENDOR SESSIONS',
+                          style: TextStyle(color: Color(0xFF475569), fontSize: 10, letterSpacing: 1.5, fontWeight: FontWeight.w600)),
                     ),
-                    Divider(
-                      color: Colors.white.withValues(alpha: 0.05),
-                      height: 24,
-                    ),
-                    Text(
-                      'ECDSA P-256 key pair locked in hardware vault.',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.3),
-                        fontSize: 11,
-                        height: 1.5,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    GestureDetector(
-                      onTap: () => Navigator.push(
-                        context,
-                        slideUpRoute(const DeviceIdentityScreen()),
-                      ),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
+                    if (!_loading)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: const Color(
-                              0xFF00C3FF,
-                            ).withValues(alpha: 0.3),
-                          ),
-                          color: const Color(
-                            0xFF00C3FF,
-                          ).withValues(alpha: 0.05),
+                          color: Colors.orangeAccent.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(20),
                         ),
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.vpn_key_outlined,
-                              color: Color(0xFF00C3FF),
-                              size: 14,
-                            ),
-                            SizedBox(width: 8),
-                            Text(
-                              'VIEW FULL IDENTITY',
-                              style: TextStyle(
-                                color: Color(0xFF00C3FF),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 1.5,
-                              ),
-                            ),
-                          ],
-                        ),
+                        child: Text('${_sessions.length}',
+                            style: const TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.bold)),
                       ),
-                    ),
-                  ],
-                ),
+                  ]),
+                  Divider(color: Colors.white.withValues(alpha: 0.05), height: 20),
+                  if (_loading)
+                    const Center(child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 10),
+                      child: SizedBox(height: 20, width: 20,
+                          child: CircularProgressIndicator(strokeWidth: 1.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.orangeAccent))),
+                    ))
+                  else if (_error)
+                    Row(children: [
+                      Icon(Icons.wifi_off_outlined,
+                          color: const Color(0xFFEF4444).withValues(alpha: 0.6), size: 15),
+                      const SizedBox(width: 10),
+                      const Text('Unable to load sessions.',
+                          style: TextStyle(color: Color(0xFF475569), fontSize: 12)),
+                    ])
+                  else if (_sessions.isEmpty)
+                    Row(children: [
+                      Icon(Icons.check_circle_outline,
+                          color: const Color(0xFF10B981).withValues(alpha: 0.6), size: 15),
+                      const SizedBox(width: 10),
+                      const Text('No active vendor sessions',
+                          style: TextStyle(color: Color(0xFF475569), fontSize: 12)),
+                    ])
+                  else
+                    ...List.generate(_sessions.length, (i) {
+                      final s = _sessions[i];
+                      return Column(children: [
+                        _VendorSessionRow(
+                          vendorUsername: s['vendor_username']?.toString() ?? '—',
+                          company:        s['company_name']?.toString()    ?? '—',
+                          clearance:      s['clearance_level']?.toString() ?? '—',
+                          timeRemaining:  _timeRemaining(s['valid_until']?.toString()),
+                          status:         s['status']?.toString()          ?? '—',
+                          onRevoke: () => _revokeVendor(s),
+                        ),
+                        if (i < _sessions.length - 1)
+                          Divider(color: Colors.white.withValues(alpha: 0.04), height: 16),
+                      ]);
+                    }),
+                ]),
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
 
-              // Security actions
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D1421),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.05),
+              // ── Security actions ────────────────────────────────────────
+              _card(
+                borderColor: Colors.white.withValues(alpha: 0.05),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('SECURITY ACTIONS',
+                      style: TextStyle(color: Color(0xFF475569), fontSize: 10, letterSpacing: 1.5, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 16),
+                  _VaultAction(
+                    icon: Icons.qr_code,
+                    label: 'Provision Vendor Token',
+                    subtitle: 'Generate JIT QR access',
+                    onTap: () => Navigator.push(context, slideUpRoute(const ProvisionTokenScreen())),
                   ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'SECURITY ACTIONS',
-                      style: TextStyle(
-                        color: Color(0xFF475569),
-                        fontSize: 10,
-                        letterSpacing: 1.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _VaultAction(
-                      icon: Icons.qr_code,
-                      label: 'Provision Vendor Token',
-                      subtitle: 'Generate JIT QR access',
-                      onTap: () => Navigator.push(
-                        context,
-                        slideUpRoute(const ProvisionTokenScreen()),
-                      ),
-                    ),
-                    Divider(
-                      color: Colors.white.withValues(alpha: 0.05),
-                      height: 20,
-                    ),
-                    _VaultAction(
-                      icon: Icons.delete_outline,
-                      label: 'Revoke This Device',
-                      subtitle: 'Destroy hardware keys',
-                      color: const Color(0xFFEF4444),
-                      onTap: () {},
-                    ),
-                  ],
-                ),
+                  Divider(color: Colors.white.withValues(alpha: 0.05), height: 20),
+                  _VaultAction(
+                    icon: Icons.delete_outline,
+                    label: 'Revoke This Device',
+                    subtitle: 'Destroy hardware keys',
+                    color: const Color(0xFFEF4444),
+                    onTap: () {},
+                  ),
+                ]),
               ),
+
               const SizedBox(height: 24),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _card({required Widget child, required Color borderColor}) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0D1421),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: borderColor),
+        ),
+        child: child,
+      );
+
+  Widget _iconBox(IconData icon, Color color) => Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: color, size: 18),
+      );
+
+  Widget _outlineBtn(String label, IconData icon, Color color) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+          color: color.withValues(alpha: 0.05),
+        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(icon, color: color, size: 14),
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.5)),
+        ]),
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VENDOR SESSION ROW
+// ─────────────────────────────────────────────────────────────────────────────
+class _VendorSessionRow extends StatelessWidget {
+  final String vendorUsername;
+  final String company;
+  final String clearance;
+  final String timeRemaining;
+  final String status;
+  final VoidCallback onRevoke;
+
+  const _VendorSessionRow({
+    required this.vendorUsername,
+    required this.company,
+    required this.clearance,
+    required this.timeRemaining,
+    required this.status,
+    required this.onRevoke,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = status == 'active';
+    final dotColor = isActive ? const Color(0xFF10B981) : Colors.orangeAccent;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Container(
+              height: 7, width: 7,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle, color: dotColor,
+                boxShadow: [BoxShadow(color: dotColor.withValues(alpha: 0.5), blurRadius: 6)],
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(company,
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 2),
+              Text('$vendorUsername  ·  ${clearance.toUpperCase()}',
+                  style: const TextStyle(color: Color(0xFF475569), fontSize: 10, letterSpacing: 0.4)),
+              const SizedBox(height: 5),
+              Row(children: [
+                Icon(Icons.timer_outlined,
+                    color: Colors.orangeAccent.withValues(alpha: 0.7), size: 11),
+                const SizedBox(width: 4),
+                Text(timeRemaining,
+                    style: const TextStyle(color: Colors.orangeAccent, fontSize: 10, letterSpacing: 0.3)),
+              ]),
+            ]),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onRevoke,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF4444).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.35)),
+              ),
+              child: const Text('REVOKE',
+                  style: TextStyle(color: Color(0xFFEF4444), fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1238,26 +1462,18 @@ class _VaultAction extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                label,
-                style: TextStyle(
-                  color: isDanger ? const Color(0xFFEF4444) : Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              Text(
-                subtitle,
-                style: const TextStyle(color: Color(0xFF475569), fontSize: 11),
-              ),
+              Text(label,
+                  style: TextStyle(
+                    color: isDanger ? const Color(0xFFEF4444) : Colors.white,
+                    fontSize: 13, fontWeight: FontWeight.w500,
+                  )),
+              Text(subtitle,
+                  style: const TextStyle(color: Color(0xFF475569), fontSize: 11)),
             ],
           ),
           const Spacer(),
-          Icon(
-            Icons.chevron_right,
-            color: const Color(0xFF475569).withValues(alpha: 0.5),
-            size: 18,
-          ),
+          Icon(Icons.chevron_right,
+              color: const Color(0xFF475569).withValues(alpha: 0.5), size: 18),
         ],
       ),
     );

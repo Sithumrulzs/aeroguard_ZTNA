@@ -121,6 +121,10 @@ class AdminResetPayload(BaseModel):
     superadmin_username: str
     target_username:     str
 
+class RevokeVendorPayload(BaseModel):
+    admin_username:  str
+    vendor_username: str
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/")
@@ -458,6 +462,68 @@ async def dashboard_telemetry(limit: int = 10):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Telemetry query failed: {e}")
+
+
+@app.get("/api/v1/dashboard/vendor-sessions")
+async def get_vendor_sessions():
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT qr_token, vendor_username, company_name,
+                              clearance_level, status, valid_until
+                       FROM public.vendor_sessions
+                       WHERE valid_until > %s AND status NOT IN ('expired', 'revoked')
+                       ORDER BY valid_until ASC""",
+                    (now,)
+                )
+                sessions = [dict(s) for s in cur.fetchall()]
+
+        # Last knock event (admin or vendor) for the vault panel
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT created_at FROM public.audit_logs "
+                    "WHERE event_type IN ('ZTNA_KNOCK', 'VENDOR_KNOCK') "
+                    "ORDER BY created_at DESC LIMIT 1"
+                )
+                row = cur.fetchone()
+                last_knock_at = row["created_at"].isoformat() if row else None
+
+        # Serialize datetime fields to ISO strings
+        for s in sessions:
+            if hasattr(s.get("valid_until"), "isoformat"):
+                s["valid_until"] = s["valid_until"].isoformat()
+
+        return {"sessions": sessions, "last_knock_at": last_knock_at}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Query failed: {e}")
+
+
+@app.post("/api/v1/admin/revoke-vendor")
+async def revoke_vendor(payload: RevokeVendorPayload, request: Request):
+    client_ip = request.client.host
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE public.vendor_sessions
+                       SET status = 'revoked'
+                       WHERE vendor_username = %s
+                         AND status NOT IN ('expired', 'revoked')""",
+                    (payload.vendor_username,)
+                )
+                affected = cur.rowcount
+        insert_audit(
+            "VENDOR_REVOKE", payload.vendor_username, client_ip,
+            "SUCCESS" if affected > 0 else "NOT_FOUND",
+            f"Session revoked by admin: {payload.admin_username}"
+        )
+        print(f"[!] VENDOR REVOKED: {payload.vendor_username} by {payload.admin_username}")
+        return {"status": "revoked", "sessions_affected": affected}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Revoke failed: {e}")
 
 
 @app.get("/health")

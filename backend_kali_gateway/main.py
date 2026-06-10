@@ -29,34 +29,40 @@ if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL not set. Check backend_kali_gateway/.env")
 
 async def _expire_vendor_sessions():
-    """Background loop: every 30 s, mark overdue sessions as expired and revoke iptables."""
+    """Background loop: every 30 s, terminate timed-out or admin-revoked sessions."""
     while True:
         await asyncio.sleep(30)
         now = datetime.now(timezone.utc)
         try:
             with get_db() as conn:
                 with conn.cursor() as cur:
+                    # Collect sessions to terminate:
+                    # 1. Active sessions past their valid_until  (time expiry)
+                    # 2. Sessions marked 'revoked' by an admin   (manual revoke)
                     cur.execute(
                         """SELECT vs.qr_token, vs.vendor_username, vs.valid_until,
-                                  u.locked_mac
+                                  vs.status, u.locked_mac
                            FROM public.vendor_sessions vs
                            LEFT JOIN public.users u ON u.username = vs.vendor_username
-                           WHERE vs.status = 'active'
-                             AND vs.valid_until < %s""",
+                           WHERE (vs.status = 'active' AND vs.valid_until < %s)
+                              OR  vs.status = 'revoked'""",
                         (now.isoformat(),)
                     )
-                    expired = cur.fetchall()
+                    to_terminate = cur.fetchall()
 
-                    for s in expired:
-                        token = s["qr_token"]
-                        ip    = (s["locked_mac"] or "").strip()
-                        ts    = str(s["valid_until"])
+                    for s in to_terminate:
+                        token  = s["qr_token"]
+                        ip     = (s["locked_mac"] or "").strip()
+                        ts     = str(s["valid_until"])
+                        reason = "expired" if s["status"] == "active" else "revoked"
 
+                        # Mark session as expired (final state for both paths)
                         cur.execute(
                             "UPDATE public.vendor_sessions SET status = 'expired' WHERE qr_token = %s",
                             (token,)
                         )
 
+                        # Remove iptables rule if the vendor had an active IP bound
                         if ip:
                             try:
                                 datestop = datetime.fromisoformat(
@@ -68,12 +74,17 @@ async def _expire_vendor_sessions():
                                      "--datestop", datestop, "--utc", "-j", "ACCEPT"],
                                     check=False, capture_output=True,
                                 )
+                                # Also drop any simple ACCEPT rules added on first knock
+                                subprocess.run(
+                                    ["sudo", "iptables", "-D", "INPUT", "-s", ip, "-j", "ACCEPT"],
+                                    check=False, capture_output=True,
+                                )
                             except Exception:
                                 pass
 
-                        print(f"[!] VENDOR SESSION EXPIRED: {s['vendor_username']} | IP: {ip}")
-                        log_audit("VENDOR_SESSION_EXPIRED", s["vendor_username"],
-                                  "EXPIRED", ip or "unknown",
+                        print(f"[!] VENDOR SESSION {reason.upper()}: {s['vendor_username']} | IP: {ip}")
+                        log_audit(f"VENDOR_SESSION_{reason.upper()}", s["vendor_username"],
+                                  reason.upper(), ip or "unknown",
                                   {"token": token[:16] + "...", "valid_until": ts})
         except Exception as e:
             print(f"[-] Session expiry check failed: {e}")
