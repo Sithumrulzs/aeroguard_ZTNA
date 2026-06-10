@@ -8,7 +8,6 @@ Credentials are loaded from .env — never hardcoded.
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from fastapi.openapi.docs import get_swagger_ui_html
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from typing import Optional
@@ -83,17 +82,7 @@ app = FastAPI(
     description="Identity, login, vendor provisioning and SIEM dashboard.",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url=None, 
-    redoc_url=None
-  
 )
-# Build a custom page that uses the absolute internet URL
-@app.get("/docs", include_in_schema=False)
-async def custom_swagger_ui_html():
-    return get_swagger_ui_html(
-        openapi_url="https://69e1efef-e429-472f-bfce-68e0ac0360ff-dev.e1-us-east-azure.choreoapis.dev/default/backendcentralauth/v1.0/openapi.json",
-        title="AeroGuard Swagger UI"
-    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -438,10 +427,15 @@ async def health_check():
 
 
 if __name__ == "__main__":
+    # 1. Dynamically read Render's port, default to 8001 if testing locally
+    RENDER_PORT = int(os.getenv("PORT", 8001))
+    
     print("\n" + "=" * 70)
-    print("AeroGuard Central Auth  —  port 8001")
+    print("AeroGuard Central Auth  —  Active Engine")
     print("=" * 70)
     print(f"Database : {'SET' if DATABASE_URL else 'MISSING — check .env'}")
-    print(f"Port     : {PORT}")
+    print(f"Port     : {RENDER_PORT}")
     print("=" * 70 + "\n")
-    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=False)
+    
+    # 2. Run Uvicorn using the dynamic port variable
+    uvicorn.run("main:app", host="0.0.0.0", port=RENDER_PORT, reload=False)
