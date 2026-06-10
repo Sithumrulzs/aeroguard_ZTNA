@@ -10,8 +10,8 @@ info:
 servers:
   - url: http://localhost:8001
     description: Local development server
-  - url: https://69e1efef-e429-472f-bfce-68e0ac0360ff-dev.e1-us-east-azure.choreoapis.dev/default/backendcentralauth/v1.0
-    description: Choreo production (WSO2 Cloud)
+  - url: https://aeroguard-ztna.onrender.com
+    description: Render production
 
 tags:
   - name: Health

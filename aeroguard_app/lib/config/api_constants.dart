@@ -11,10 +11,9 @@ class ApiConstants {
   static const String vendorProvisionEndpoint =
       "$centralAuthUrl/api/v1/provision-vendor";
 
-  // ——— Central Auth – identity / login (WSO2 Cloud Control Plane) ———
-  // PASTE YOUR LIVE CHOREO HTTPS URL HERE (Remove the trailing slash if necessary)
+  // ——— Central Auth – identity / login (Render cloud backend) ———
   static const String centralAuthUrl =
-      "https://69e1efef-e429-472f-bfce-68e0ac0360ff-dev.e1-us-east-azure.choreoapis.dev/default/backendcentralauth/v1.0";
+      "https://aeroguard-ztna.onrender.com";
 
   static const String loginEndpoint          = "$centralAuthUrl/api/v1/auth/login";
   static const String registerDeviceEndpoint = "$centralAuthUrl/api/v1/auth/register-device";
