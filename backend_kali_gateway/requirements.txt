@@ -4,3 +4,4 @@ pydantic
 ecdsa
 psycopg2-binary
 python-dotenv
+scapy

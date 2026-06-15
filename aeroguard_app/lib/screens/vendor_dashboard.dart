@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
@@ -56,6 +57,25 @@ class _VendorDashboardState extends State<VendorDashboard> {
   Future<void> _handleVendorKnock() async {
     setState(() => _knockStatus = _VKnockStatus.knocking);
     try {
+      // ── 1. UDP knock → port 7777 ─────────────────────────────────────────
+      // Sniffer validates token + injects iptables rule before HTTP arrives.
+      try {
+        final udpBody = utf8.encode(jsonEncode({
+          'type':        'vendor_knock',
+          'token_hash':  widget.token,
+          'vendor_name': widget.vendorName,
+        }));
+        final sock = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+        sock.send(udpBody,
+                  InternetAddress(ApiConstants.gatewayIp),
+                  ApiConstants.udpKnockPort);
+        sock.close();
+      } catch (_) {}
+
+      // ── 2. Wait for sniffer to open port 8000 ────────────────────────────
+      await Future.delayed(const Duration(seconds: 2));
+
+      // ── 3. HTTP POST — bind TOFU + retrieve session details ──────────────
       final position = await LocationService.getPosition();
       final response = await http
           .post(

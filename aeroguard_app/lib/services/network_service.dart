@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config/api_constants.dart';
@@ -6,70 +7,57 @@ import 'enclave_service.dart';
 import 'location_service.dart';
 
 class NetworkService {
-  static final Uri knockUri = Uri.parse(ApiConstants.knockEndpoint);
+  static final Uri _knockUri = Uri.parse(ApiConstants.knockEndpoint);
 
-  /// Executes the Zero Trust network knock.
-  /// The gateway has a 30-second anti-replay window; the app enforces a
-  /// 10-second connection timeout so it fails fast on unreachable hosts.
   static Future<bool> sendAuthorizationKnock(String username) async {
-    // ── DIAGNOSTIC ───────────────────────────────────────────────────────────
-    debugPrint('🚨 [DIAGNOSTIC] App is firing packet to: ${knockUri.toString()}');
-    debugPrint('🚨 [DIAGNOSTIC] Gateway IP   : ${ApiConstants.gatewayIp}');
-    debugPrint('🚨 [DIAGNOSTIC] Gateway Port : ${ApiConstants.gatewayPort}');
-    debugPrint('🚨 [DIAGNOSTIC] Username     : $username');
-    // ─────────────────────────────────────────────────────────────────────────
-
     final Map<String, dynamic>? payload =
         await EnclaveService.generateZeroTrustPayload(username);
 
     if (payload == null) {
-      debugPrint('🚨 [DIAGNOSTIC] Enclave payload is NULL — device not provisioned yet.');
-      debugPrint('[-] Aborting: enclave payload generation failed.');
+      debugPrint('[-] Enclave payload null — device not provisioned.');
       return false;
     }
 
-    debugPrint('🚨 [DIAGNOSTIC] Device ID  : ${payload['device_id']}');
-    debugPrint('🚨 [DIAGNOSTIC] Timestamp  : ${payload['timestamp']}');
-    debugPrint('🚨 [DIAGNOSTIC] Signature  : ${(payload['signature'] as String).substring(0, 16)}...');
+    final body      = <String, dynamic>{...payload, 'telemetry': const <String, dynamic>{}};
+    final bodyBytes = utf8.encode(jsonEncode(body));
 
-    // GPS must NOT block the knock — send the packet immediately.
-    // Location is pushed to the central auth server after the knock completes.
-    final body = <String, dynamic>{
-      ...payload,
-      'telemetry': const <String, dynamic>{},
-    };
-
+    // ── 1. UDP knock → port 7777 ─────────────────────────────────────────────
+    // Scapy sniffer sees this via raw socket even though iptables DROPs it
+    // for the normal UDP stack. No response is expected.
     try {
-      debugPrint('🚨 [DIAGNOSTIC] Sending HTTP POST now...');
+      final sock = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+      sock.send(bodyBytes,
+                InternetAddress(ApiConstants.gatewayIp),
+                ApiConstants.udpKnockPort);
+      sock.close();
+      debugPrint('[*] UDP knock → ${ApiConstants.gatewayIp}:${ApiConstants.udpKnockPort}');
+    } catch (e) {
+      debugPrint('[-] UDP send failed: $e');
+      return false;
+    }
+
+    // ── 2. Wait for sniffer to inject iptables ACCEPT + DNAT rule ───────────
+    await Future.delayed(const Duration(seconds: 2));
+
+    // ── 3. HTTP POST — port 8000 is now open for this IP via DNAT ───────────
+    try {
       final response = await http
           .post(
-            knockUri,
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
+            _knockUri,
+            headers: {'Content-Type': 'application/json'},
             body: jsonEncode(body),
           )
-          .timeout(
-            Duration(seconds: ApiConstants.connectionTimeoutSeconds),
-          );
-
-      debugPrint('🚨 [DIAGNOSTIC] Response status : ${response.statusCode}');
-      debugPrint('🚨 [DIAGNOSTIC] Response body   : ${response.body}');
+          .timeout(Duration(seconds: ApiConstants.connectionTimeoutSeconds));
 
       if (response.statusCode == 200) {
         debugPrint('[+] KNOCK ACCEPTED — gateway open.');
-        // Fire-and-forget: push GPS after the knock so it never delays the tunnel.
         LocationService.sendToBackend(username);
         return true;
       }
-      debugPrint(
-        '[-] KNOCK DENIED — HTTP ${response.statusCode}: ${response.body}',
-      );
+      debugPrint('[-] KNOCK DENIED — HTTP ${response.statusCode}');
       return false;
     } catch (e) {
-      debugPrint('🚨 [DIAGNOSTIC] EXCEPTION caught: $e');
-      debugPrint('[-] NETWORK ERROR — could not reach gateway: $e');
+      debugPrint('[-] Gateway unreachable: $e');
       return false;
     }
   }

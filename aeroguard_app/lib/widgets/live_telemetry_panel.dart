@@ -15,20 +15,19 @@ class LiveTelemetryPanel extends StatefulWidget {
 class _LiveTelemetryPanelState extends State<LiveTelemetryPanel> {
   Timer? _timer;
 
-  int    _activeAdmins  = 0;
-  int    _activeVendors = 0;
-  String _gatewayStatus = 'CHECKING...';
-  String _adminLabel    = '—';
-  String _vendorLabel   = 'Idle';
-  String _lastEvent     = '—';
-  bool   _loading       = true;
-  bool   _error         = false;
+  int    _registeredAdmins = 0;
+  int    _activeVendors    = 0;
+  String _gatewayStatus    = 'SECURED';
+  String _registeredLabel  = '—';
+  String _vendorLabel      = 'Idle';
+  String _lastKnock        = '—';
+  bool   _loading          = true;
+  bool   _error            = false;
 
   @override
   void initState() {
     super.initState();
     _fetch();
-    // Poll every 15 seconds
     _timer = Timer.periodic(const Duration(seconds: 15), (_) => _fetch());
   }
 
@@ -36,6 +35,21 @@ class _LiveTelemetryPanelState extends State<LiveTelemetryPanel> {
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  // UTC ISO string → Asia/Colombo (UTC+5:30) formatted label
+  String _toColombTime(String isoUtc) {
+    try {
+      final colombo = DateTime.parse(isoUtc).toUtc()
+          .add(const Duration(hours: 5, minutes: 30));
+      final h = colombo.hour.toString().padLeft(2, '0');
+      final m = colombo.minute.toString().padLeft(2, '0');
+      const months = ['Jan','Feb','Mar','Apr','May','Jun',
+                      'Jul','Aug','Sep','Oct','Nov','Dec'];
+      return '${months[colombo.month - 1]} ${colombo.day}  $h:$m';
+    } catch (_) {
+      return '—';
+    }
   }
 
   Future<void> _fetch() async {
@@ -49,29 +63,25 @@ class _LiveTelemetryPanelState extends State<LiveTelemetryPanel> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
 
-        final adminNames  = List<String>.from(data['active_admin_names'] ?? []);
+        final adminNames  = List<String>.from(
+            data['registered_admin_names'] ?? data['active_admin_names'] ?? []);
         final vendorNames = List<String>.from(data['active_vendor_names'] ?? []);
-        final events      = List<Map<String, dynamic>>.from(data['events'] ?? []);
-
-        String lastEvent = '—';
-        if (events.isNotEmpty) {
-          final e = events.first;
-          lastEvent = '${e['event_type'] ?? ''} · ${e['status'] ?? ''}';
-        }
+        final lastKnockAt = data['last_knock_at'] as String?;
 
         setState(() {
-          _activeAdmins  = (data['active_admins'] as num?)?.toInt() ?? 0;
-          _activeVendors = (data['active_vendors'] as num?)?.toInt() ?? 0;
-          _gatewayStatus = data['gateway_status'] ?? 'SECURED';
-          _adminLabel    = adminNames.isEmpty
-              ? '$_activeAdmins · None'
-              : '$_activeAdmins · ${adminNames.join(', ')}';
-          _vendorLabel   = vendorNames.isEmpty
+          _registeredAdmins = ((data['registered_admins'] ??
+                                data['active_admins']) as num?)?.toInt() ?? 0;
+          _activeVendors    = (data['active_vendors'] as num?)?.toInt() ?? 0;
+          _gatewayStatus    = data['gateway_status'] ?? 'SECURED';
+          _registeredLabel  = adminNames.isEmpty
+              ? '$_registeredAdmins · None'
+              : '$_registeredAdmins · ${adminNames.join(', ')}';
+          _vendorLabel      = vendorNames.isEmpty
               ? '$_activeVendors · Idle'
               : '$_activeVendors · ${vendorNames.join(', ')}';
-          _lastEvent     = lastEvent;
-          _loading       = false;
-          _error         = false;
+          _lastKnock        = lastKnockAt != null ? _toColombTime(lastKnockAt) : '—';
+          _loading          = false;
+          _error            = false;
         });
       } else {
         if (mounted) setState(() { _error = true; _loading = false; });
@@ -100,9 +110,9 @@ class _LiveTelemetryPanelState extends State<LiveTelemetryPanel> {
           : Column(
               children: [
                 _TelemetryRow(
-                  label: 'Active Admins',
-                  value: _error ? '—' : _adminLabel,
-                  statusColor: _activeAdmins > 0
+                  label: 'Registered Admins',
+                  value: _error ? '—' : _registeredLabel,
+                  statusColor: _registeredAdmins > 0
                       ? const Color(0xFF10B981)
                       : const Color(0xFF475569),
                 ),
@@ -116,7 +126,7 @@ class _LiveTelemetryPanelState extends State<LiveTelemetryPanel> {
                 ),
                 const SizedBox(height: 14),
                 _TelemetryRow(
-                  label: 'Gateway Status',
+                  label: 'Gateway',
                   value: _error ? 'OFFLINE' : _gatewayStatus,
                   statusColor: _error
                       ? const Color(0xFFEF4444)
@@ -124,8 +134,8 @@ class _LiveTelemetryPanelState extends State<LiveTelemetryPanel> {
                 ),
                 const SizedBox(height: 14),
                 _TelemetryRow(
-                  label: 'Last Event',
-                  value: _lastEvent,
+                  label: 'Last Knock',
+                  value: _lastKnock,
                   statusColor: const Color(0xFF475569),
                 ),
               ],
@@ -133,8 +143,6 @@ class _LiveTelemetryPanelState extends State<LiveTelemetryPanel> {
     );
   }
 }
-
-// ── Shared row widget ─────────────────────────────────────────────────────────
 
 class _TelemetryRow extends StatelessWidget {
   final String label;

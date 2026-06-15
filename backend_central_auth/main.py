@@ -451,12 +451,14 @@ async def dashboard_stats():
                 knocks = cur.fetchone()["cnt"]
 
         return {
-            "active_admins":      len(admin_names),
-            "admin_names":        admin_names,
-            "active_vendors":     len(vendor_names),
-            "vendor_names":       vendor_names,
-            "total_knocks_today": knocks,
-            "gateway_status":     "SECURED",
+            "active_admins":          len(admin_names),
+            "admin_names":            admin_names,
+            "registered_admins":      len(admin_names),
+            "registered_admin_names": admin_names,
+            "active_vendors":         len(vendor_names),
+            "vendor_names":           vendor_names,
+            "total_knocks_today":     knocks,
+            "gateway_status":         "SECURED",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Stats query failed: {e}")
@@ -474,8 +476,11 @@ async def dashboard_telemetry(limit: int = 10):
                 )
                 events = cur.fetchall()
 
-                # Active admins
-                cur.execute("SELECT username FROM public.users WHERE role = 'admin'")
+                # All registered admins
+                cur.execute(
+                    "SELECT username FROM public.users "
+                    "WHERE role IN ('admin', 'superadmin') ORDER BY username"
+                )
                 admin_names = [r["username"] for r in cur.fetchall()]
 
                 # Active vendors
@@ -486,13 +491,25 @@ async def dashboard_telemetry(limit: int = 10):
                 )
                 vendor_names = [r["vendor_username"] for r in cur.fetchall()]
 
+                # Last knock (admin or vendor)
+                cur.execute(
+                    "SELECT created_at FROM public.audit_logs "
+                    "WHERE event_type IN ('ZTNA_KNOCK', 'VENDOR_KNOCK') "
+                    "ORDER BY created_at DESC LIMIT 1"
+                )
+                knock_row = cur.fetchone()
+                last_knock_at = knock_row["created_at"].isoformat() if knock_row else None
+
         return {
-            "events":              [dict(e) for e in events],
-            "active_admins":       len(admin_names),
-            "active_admin_names":  admin_names,
-            "active_vendors":      len(vendor_names),
-            "active_vendor_names": vendor_names,
-            "gateway_status":      "SECURED",
+            "events":                 [dict(e) for e in events],
+            "active_admins":          len(admin_names),
+            "active_admin_names":     admin_names,
+            "registered_admins":      len(admin_names),
+            "registered_admin_names": admin_names,
+            "active_vendors":         len(vendor_names),
+            "active_vendor_names":    vendor_names,
+            "gateway_status":         "SECURED",
+            "last_knock_at":          last_knock_at,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Telemetry query failed: {e}")

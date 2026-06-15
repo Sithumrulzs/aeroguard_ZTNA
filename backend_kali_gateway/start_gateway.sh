@@ -1,30 +1,38 @@
 #!/bin/bash
 # =============================================================================
 #  AeroGuard ZTNA — Gateway Launcher
-#  Run this instead of calling main.py directly. It sets dark mode first,
-#  then starts the FastAPI gateway so the machine is never exposed without
-#  the firewall in place.
+#  Starts firewall, SPA sniffer, then FastAPI in one command.
 #
 #      sudo bash start_gateway.sh
 # =============================================================================
 
-set -e
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ "$EUID" -ne 0 ]; then
-    echo "[!] Run as root so iptables and the gateway start together:"
-    echo "    sudo bash start_gateway.sh"
+    echo "[!] Run as root: sudo bash start_gateway.sh"
     exit 1
 fi
 
-# Step 1: Lock the network down first — machine is dark before gateway opens
-echo "[*] Step 1 — Activating dark mode firewall..."
+# Step 1: Apply SPA firewall (dark mode + DNAT support)
+echo "[*] Step 1 — Applying SPA firewall..."
 bash "$SCRIPT_DIR/setup_darkmode.sh"
 
-# Step 2: Start the FastAPI gateway (port 8000 is now the only open port)
+# Step 2: Start SPA sniffer in background (must run as root for raw socket)
 echo ""
-echo "[*] Step 2 — Starting AeroGuard ZTNA Gateway..."
+echo "[*] Step 2 — Starting SPA knock sniffer (UDP 7777)..."
+python3 "$SCRIPT_DIR/spa_sniffer.py" &
+SNIFFER_PID=$!
+echo "    sniffer PID: $SNIFFER_PID"
+
+# Brief pause to let the sniffer bind before the gateway starts
+sleep 1
+
+# Step 3: Start FastAPI gateway on loopback (reachable only after a verified knock)
+echo ""
+echo "[*] Step 3 — Starting AeroGuard Gateway (127.0.0.1:8000)..."
 echo ""
 cd "$SCRIPT_DIR"
-python main.py
+python3 main.py
+
+# If FastAPI exits, kill the sniffer too
+kill "$SNIFFER_PID" 2>/dev/null

@@ -1,0 +1,18 @@
+[Unit]
+Description=AeroGuard ZTNA Gateway (FastAPI data-logging layer)
+Documentation=https://github.com/your-org/aeroguard
+After=network.target spa_sniffer.service
+Requires=spa_sniffer.service
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/aeroguard/backend_kali_gateway/.env
+WorkingDirectory=/opt/aeroguard/backend_kali_gateway
+ExecStart=/usr/bin/python3 main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

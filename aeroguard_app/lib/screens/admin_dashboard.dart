@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
@@ -213,12 +214,12 @@ class _OverviewTabState extends State<_OverviewTab> {
   String _username       = 'ADMIN';
   bool   _loadingStats   = true;
   bool   _statsError     = false;
-  String _activeAdmins   = '0';
-  String _activeVendors  = '0';
-  String _totalKnocks    = '0';
-  String _gatewayStatus  = '—';
-  List<String> _adminNames  = [];
-  List<String> _vendorNames = [];
+  String _registeredAdmins    = '0';
+  String _activeVendors       = '0';
+  String _totalKnocks         = '0';
+  String _gatewayStatus       = '—';
+  List<String> _registeredAdminNames = [];
+  List<String> _vendorNames          = [];
 
   @override
   void initState() {
@@ -249,12 +250,12 @@ class _OverviewTabState extends State<_OverviewTab> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         setState(() {
-          _activeAdmins  = '${data['active_admins']  ?? 0}';
-          _activeVendors = '${data['active_vendors']  ?? 0}';
-          _totalKnocks   = '${data['total_knocks_today'] ?? 0}';
-          _gatewayStatus = data['gateway_status'] ?? 'SECURED';
-          _adminNames    = List<String>.from(data['admin_names']  ?? []);
-          _vendorNames   = List<String>.from(data['vendor_names'] ?? []);
+          _registeredAdmins     = '${data['registered_admins'] ?? data['active_admins'] ?? 0}';
+          _activeVendors        = '${data['active_vendors']  ?? 0}';
+          _totalKnocks          = '${data['total_knocks_today'] ?? 0}';
+          _gatewayStatus        = data['gateway_status'] ?? 'SECURED';
+          _registeredAdminNames = List<String>.from(data['registered_admin_names'] ?? data['admin_names'] ?? []);
+          _vendorNames          = List<String>.from(data['vendor_names'] ?? []);
           _loadingStats  = false;
           _statsError    = false;
         });
@@ -339,10 +340,10 @@ class _OverviewTabState extends State<_OverviewTab> {
                       childAspectRatio: 1.25,
                       children: [
                         _MetricCard(
-                          label: 'ACTIVE ADMINS',
-                          value: _activeAdmins,
+                          label: 'REGISTERED ADMINS',
+                          value: _registeredAdmins,
                           icon: Icons.person_outline_rounded,
-                          names: _adminNames,
+                          names: _registeredAdminNames,
                           isLoading: _loadingStats,
                         ),
                         _MetricCard(
@@ -380,62 +381,156 @@ class _OverviewTabState extends State<_OverviewTab> {
   }
 }
 
-class _GatewayStatusCard extends StatelessWidget {
+class _GatewayStatusCard extends StatefulWidget {
+  const _GatewayStatusCard();
+
+  @override
+  State<_GatewayStatusCard> createState() => _GatewayStatusCardState();
+}
+
+class _GatewayStatusCardState extends State<_GatewayStatusCard> {
+  Timer? _timer;
+  bool? _online;   // null = checking
+  bool? _secured;  // null = unknown, true = dark-mode active, false = visible
+
+  @override
+  void initState() {
+    super.initState();
+    _checkGateway();
+    _timer = Timer.periodic(const Duration(seconds: 20), (_) => _checkGateway());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _checkGateway() async {
+    // ── 1. HTTP health check → ONLINE / OFFLINE ───────────────────────────
+    bool online = false;
+    try {
+      final res = await http
+          .get(Uri.parse(ApiConstants.gatewayHealthUrl))
+          .timeout(const Duration(seconds: 4));
+      online = res.statusCode == 200;
+    } catch (_) {
+      online = false;
+    }
+
+    // ── 2. TCP probe on a non-knock port → SECURED / UNSECURED ───────────
+    // Dark mode (DROP policy): connection times out          → SECURED
+    // No dark mode (REJECT/open): connection refused/instant → UNSECURED
+    bool? secured;
+    if (online) {
+      try {
+        final socket = await Socket.connect(
+          ApiConstants.gatewayIp,
+          9999,
+          timeout: const Duration(seconds: 2),
+        );
+        socket.destroy();
+        secured = false; // connected → something answered → UNSECURED
+      } on SocketException catch (e) {
+        final code = e.osError?.errorCode;
+        // ECONNREFUSED (111 on Linux/Android) → host responded → UNSECURED
+        if (code == 111 || e.message.toLowerCase().contains('refused')) {
+          secured = false;
+        } else {
+          secured = true; // timeout / no response → DROP rule active → SECURED
+        }
+      } catch (_) {
+        secured = true;
+      }
+    }
+
+    if (mounted) setState(() { _online = online; _secured = secured; });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final bool checking  = _online == null;
+    final bool isOnline  = _online == true;
+    final bool isSecured = _secured == true;
+
+    final Color accent = checking
+        ? const Color(0xFF00C3FF)
+        : isOnline
+            ? (isSecured ? const Color(0xFF10B981) : const Color(0xFFF59E0B))
+            : const Color(0xFFEF4444);
+
+    final String title = checking
+        ? 'GATEWAY'
+        : isOnline
+            ? (isSecured ? 'GATEWAY SECURED' : 'GATEWAY UNSECURED')
+            : 'GATEWAY OFFLINE';
+
+    final String subtitle = checking
+        ? 'Checking...'
+        : isOnline
+            ? (isSecured ? 'Zero Trust enforced' : 'Dark mode inactive')
+            : 'Not reachable';
+
+    final String badge = checking ? '···' : (isOnline ? 'ONLINE' : 'OFFLINE');
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
       decoration: BoxDecoration(
         color: const Color(0xFF0D1421),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: const Color(0xFF10B981).withValues(alpha: 0.25),
-        ),
+        border: Border.all(color: accent.withValues(alpha: 0.25)),
         boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF10B981).withValues(alpha: 0.06),
-            blurRadius: 24,
-          ),
+          BoxShadow(color: accent.withValues(alpha: 0.06), blurRadius: 24),
         ],
       ),
       child: Row(
         children: [
-          const _PulsingDot(color: Color(0xFF10B981)),
+          checking
+              ? const SizedBox(
+                  width: 8, height: 8,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00C3FF)),
+                  ),
+                )
+              : _PulsingDot(color: accent),
           const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'GATEWAY SECURED',
-                style: TextStyle(
-                  color: Color(0xFF10B981),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 2.0,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: accent,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 2.0,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                'Zero Trust policy enforced',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.3),
-                  fontSize: 11,
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.3),
+                    fontSize: 11,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: const Color(0xFF10B981).withValues(alpha: 0.1),
+              color: accent.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Text(
-              'ONLINE',
+            child: Text(
+              badge,
               style: TextStyle(
-                color: Color(0xFF10B981),
+                color: accent,
                 fontSize: 9,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 1.5,

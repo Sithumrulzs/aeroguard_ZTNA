@@ -4,20 +4,24 @@ class ApiConstants {
   static const String gatewayPort = "8000";
   static const String baseUrl = "http://$gatewayIp:$gatewayPort/api/v1";
 
-  static const String knockEndpoint        = "$baseUrl/knock";
-  static const String vendorKnockEndpoint  = "$baseUrl/vendor_knock";
+  static const String gatewayHealthUrl = "http://$gatewayIp:$gatewayPort/health";
+  static const int    udpKnockPort  = 7777;
+  static const String knockEndpoint = "$baseUrl/knock";
+  static const String vendorKnockEndpoint = "$baseUrl/vendor_knock";
 
   // ——— Central Auth – vendor provisioning (cloud, works off-network) ———
+
   static const String vendorProvisionEndpoint =
       "$centralAuthUrl/api/v1/provision-vendor";
 
   // ——— Central Auth – identity / login (Render cloud backend) ———
-  static const String centralAuthUrl =
-      "https://aeroguard-ztna.onrender.com";
+  static const String centralAuthUrl = "https://aeroguard-ztna.onrender.com";
 
-  static const String loginEndpoint          = "$centralAuthUrl/api/v1/auth/login";
-  static const String registerDeviceEndpoint = "$centralAuthUrl/api/v1/auth/register-device";
-  static const String adminResetDeviceEndpoint = "$centralAuthUrl/api/v1/auth/admin/reset-device";
+  static const String loginEndpoint = "$centralAuthUrl/api/v1/auth/login";
+  static const String registerDeviceEndpoint =
+      "$centralAuthUrl/api/v1/auth/register-device";
+  static const String adminResetDeviceEndpoint =
+      "$centralAuthUrl/api/v1/auth/admin/reset-device";
 
   static const String dashboardStatsEndpoint =
       "$centralAuthUrl/api/v1/dashboard/stats";
