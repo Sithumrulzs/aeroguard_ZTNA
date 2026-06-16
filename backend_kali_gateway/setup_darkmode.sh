@@ -17,7 +17,9 @@
 # =============================================================================
 
 POCKET_SUBNET="${POCKET_SUBNET:-192.168.100.0/24}"
-GATEWAY_IFACE="${GATEWAY_INTERFACE:-wlan0}"
+# Auto-detect default interface if not overridden (handles eth0, wlan0, etc.)
+GATEWAY_IFACE="${GATEWAY_INTERFACE:-$(ip route show default 2>/dev/null | awk '/default/ {print $5; exit}')}"
+GATEWAY_IFACE="${GATEWAY_IFACE:-eth0}"
 KNOCK_PORT=8000
 UDP_PORT=7777
 
@@ -78,18 +80,32 @@ echo "[5/8] Explicitly dropping UDP $UDP_PORT and TCP $KNOCK_PORT..."
 iptables -A INPUT -p udp --dport "$UDP_PORT"   -j DROP
 iptables -A INPUT -p tcp --dport "$KNOCK_PORT" -j DROP
 
-# ── 6. Enable DNAT → loopback (FastAPI bound to 127.0.0.1) ───────────────────
-# route_localnet allows the kernel to route packets destined for 127.x from outside.
-# MASQUERADE on lo rewrites source so FastAPI replies are routed back correctly.
-echo "[6/8] Enabling DNAT support for loopback (route_localnet + MASQUERADE)..."
+# ── 6. Enable DNAT + IP forwarding ───────────────────────────────────────────
+# route_localnet: lets DNAT redirect to 127.0.0.1:8000 from external clients.
+# ip_forward: kernel must forward packets between interfaces so that laptop
+#             FORWARD rules injected by spa_sniffer.py actually take effect.
+# MASQUERADE on outgoing iface: rewrites src IP for laptop → internet traffic.
+echo "[6/8] Enabling route_localnet, ip_forward, and MASQUERADE..."
 sysctl -w net.ipv4.conf.all.route_localnet=1 > /dev/null
+sysctl -w net.ipv4.ip_forward=1              > /dev/null
+
+# DNAT loopback rewrite for phone → FastAPI
 iptables -t nat -A POSTROUTING \
     -d 127.0.0.1 -p tcp --dport "$KNOCK_PORT" -j MASQUERADE
 
-# ── 7. Persist route_localnet across reboots ──────────────────────────────────
-echo "[7/8] Persisting route_localnet..."
+# NAT for laptop traffic routed through Kali (ping, nmap, internet)
+iptables -t nat -A POSTROUTING -o "$GATEWAY_IFACE" -j MASQUERADE
+
+# Allow return / established traffic through FORWARD chain (stateful)
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# ── 7. Persist sysctl across reboots ─────────────────────────────────────────
+echo "[7/8] Persisting sysctl settings..."
 if ! grep -q "net.ipv4.conf.all.route_localnet" /etc/sysctl.conf 2>/dev/null; then
     echo "net.ipv4.conf.all.route_localnet = 1" >> /etc/sysctl.conf
+fi
+if ! grep -q "net.ipv4.ip_forward" /etc/sysctl.conf 2>/dev/null; then
+    echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
 fi
 
 # ── 8. Verify ─────────────────────────────────────────────────────────────────

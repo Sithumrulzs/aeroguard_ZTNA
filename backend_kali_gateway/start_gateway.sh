@@ -20,7 +20,7 @@ bash "$SCRIPT_DIR/setup_darkmode.sh"
 # Step 2: Start SPA sniffer in background (must run as root for raw socket)
 echo ""
 echo "[*] Step 2 — Starting SPA knock sniffer (UDP 7777)..."
-python3 -u "$SCRIPT_DIR/spa_sniffer.py" &
+"$SCRIPT_DIR/venv/bin/python3" -u "$SCRIPT_DIR/spa_sniffer.py" &
 SNIFFER_PID=$!
 echo "    sniffer PID: $SNIFFER_PID"
 
@@ -32,7 +32,7 @@ echo ""
 echo "[*] Step 3 — Starting AeroGuard Gateway (127.0.0.1:8000)..."
 echo ""
 cd "$SCRIPT_DIR"
-python3 main.py
+"$SCRIPT_DIR/venv/bin/python3" main.py
 
 # If FastAPI exits, kill the sniffer too
 kill "$SNIFFER_PID" 2>/dev/null

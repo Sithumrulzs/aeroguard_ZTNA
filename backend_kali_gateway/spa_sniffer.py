@@ -11,7 +11,6 @@ Two knock types:
 
 import json
 import hashlib
-import re
 import subprocess
 import threading
 import os

@@ -274,7 +274,7 @@ async def health_check():
 
 if __name__ == "__main__":
     print("\n" + "=" * 60)
-    print("AeroGuard ZTNA Gateway — 127.0.0.1:{PORT}")
+    print(f"AeroGuard ZTNA Gateway — 127.0.0.1:{PORT}")
     print("Firewall: spa_sniffer.py  |  Bound: loopback only")
     print("=" * 60 + "\n")
     uvicorn.run("main:app", host="127.0.0.1", port=PORT, reload=False)
