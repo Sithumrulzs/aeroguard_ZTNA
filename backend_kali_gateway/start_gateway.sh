@@ -13,8 +13,16 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Step 0: Build venv if it doesn't exist (happens after every fresh unzip)
+if [ ! -f "$SCRIPT_DIR/venv/bin/python3" ]; then
+    echo "[*] Step 0 — venv not found, building..."
+    python3 -m venv "$SCRIPT_DIR/venv"
+    "$SCRIPT_DIR/venv/bin/pip" install -q -r "$SCRIPT_DIR/requirements.txt"
+    echo "[*] Step 0 — venv ready."
+fi
+
 # Step 1: Apply SPA firewall (dark mode + DNAT support)
-echo "[*] Step 1 — Applying SPA firewall..."
+echo "[*] Step 1 — Applying SPA firewall (dark mode)..."
 bash "$SCRIPT_DIR/setup_darkmode.sh"
 
 # Step 2: Kill any leftover sniffer from a previous run, then start fresh
