@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 import psycopg2
 import psycopg2.extras
 import ecdsa
-from scapy.all import sniff, UDP, IP, Raw, conf as scapy_conf, get_if_addr
+from scapy.all import sniff, UDP, IP, Raw, ARP, Ether, srp, conf as scapy_conf, get_if_addr
 
 # ── Environment ───────────────────────────────────────────────────────────────
 load_dotenv()
@@ -127,9 +127,20 @@ def _schedule(client_ip: str, timeout: int, username: str):
 
 # ── Laptop firewall (full access) ─────────────────────────────────────────────
 def _inject_laptop(laptop_ip: str):
-    """Grant full network access for a laptop — all protocols, all ports (ping, nmap, etc.)."""
+    """Grant full network access for a laptop — INPUT (to Kali) + FORWARD (through Kali)."""
+    # Traffic destined TO Kali itself (ssh, api, etc.)
     subprocess.run(
         ["iptables", "-I", "INPUT", "1", "-s", laptop_ip, "-j", "ACCEPT"],
+        capture_output=True,
+    )
+    # Traffic FROM laptop routed THROUGH Kali to other hosts / internet
+    subprocess.run(
+        ["iptables", "-I", "FORWARD", "1", "-s", laptop_ip, "-j", "ACCEPT"],
+        capture_output=True,
+    )
+    # Return traffic back TO the laptop from those hosts
+    subprocess.run(
+        ["iptables", "-I", "FORWARD", "1", "-d", laptop_ip, "-j", "ACCEPT"],
         capture_output=True,
     )
     print(f"[+] LAPTOP ACCESS   {laptop_ip} — full access granted (ping/nmap enabled)")
@@ -139,6 +150,14 @@ def _remove_laptop(laptop_ip: str):
     """Revoke full network access for a laptop."""
     subprocess.run(
         ["iptables", "-D", "INPUT", "-s", laptop_ip, "-j", "ACCEPT"],
+        capture_output=True,
+    )
+    subprocess.run(
+        ["iptables", "-D", "FORWARD", "-s", laptop_ip, "-j", "ACCEPT"],
+        capture_output=True,
+    )
+    subprocess.run(
+        ["iptables", "-D", "FORWARD", "-d", laptop_ip, "-j", "ACCEPT"],
         capture_output=True,
     )
     print(f"[!] LAPTOP REMOVED  {laptop_ip} — session expired")
@@ -168,26 +187,24 @@ def _schedule_laptop(laptop_ip: str, timeout: int, name: str):
 # ── MAC → IP resolution ───────────────────────────────────────────────────────
 def _mac_to_ip(mac: str) -> str | None:
     """
-    Resolve a MAC address to an IP using the ARP cache.
-    Sends a broadcast ping first to refresh stale entries.
+    Resolve a MAC address to an IP by doing a live ARP scan of the subnet.
+    Scapy ARP is reliable because every device MUST reply to ARP requests
+    (unlike broadcast ICMP, which Windows ignores by default).
     """
     if not mac:
         return None
     mac_clean = mac.lower().replace("-", ":")
+    subnet = ".".join(GATEWAY_IP.split(".")[:3]) + ".0/24"
     try:
-        subnet_broadcast = ".".join(GATEWAY_IP.split(".")[:3]) + ".255"
-        subprocess.run(
-            ["ping", "-c", "1", "-b", subnet_broadcast],
-            capture_output=True, timeout=3,
+        answered, _ = srp(
+            Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=subnet),
+            iface=IFACE, timeout=4, verbose=0,
         )
-    except Exception:
-        pass
-    result = subprocess.run(["arp", "-n"], capture_output=True, text=True)
-    for line in result.stdout.splitlines():
-        if mac_clean in line.lower():
-            match = re.search(r"(\d+\.\d+\.\d+\.\d+)", line)
-            if match:
-                return match.group(1)
+        for _, rcv in answered:
+            if rcv[Ether].src.lower() == mac_clean:
+                return rcv[ARP].psrc
+    except Exception as e:
+        print(f"[-] ARP scan failed: {e}")
     return None
 
 
