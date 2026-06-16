@@ -17,9 +17,10 @@ fi
 echo "[*] Step 1 — Applying SPA firewall..."
 bash "$SCRIPT_DIR/setup_darkmode.sh"
 
-# Step 2: Start SPA sniffer in background (must run as root for raw socket)
+# Step 2: Kill any leftover sniffer from a previous run, then start fresh
 echo ""
 echo "[*] Step 2 — Starting SPA knock sniffer (UDP 7777)..."
+pkill -f "spa_sniffer.py" 2>/dev/null && sleep 0.5
 "$SCRIPT_DIR/venv/bin/python3" -u "$SCRIPT_DIR/spa_sniffer.py" &
 SNIFFER_PID=$!
 echo "    sniffer PID: $SNIFFER_PID"

@@ -13,6 +13,8 @@ import json
 import hashlib
 import subprocess
 import threading
+import signal
+import atexit
 import os
 from datetime import datetime, timezone
 from contextlib import contextmanager
@@ -40,6 +42,24 @@ if not DATABASE_URL:
 # Active session timers keyed by IP (phones) or "laptop:<ip>" (laptops)
 _timers: dict[str, threading.Timer] = {}
 _lock   = threading.Lock()
+
+# Track every IP we've injected so we can clean up on exit
+_active_phones:  set[str] = set()
+_active_laptops: set[str] = set()
+
+
+def _cleanup_all():
+    """Remove every iptables rule this process injected. Called on exit."""
+    print("\n[*] SHUTDOWN — flushing all injected firewall rules...")
+    for ip in list(_active_phones):
+        _remove(ip)
+    for ip in list(_active_laptops):
+        _remove_laptop(ip)
+    print("[*] Firewall restored to dark mode.")
+
+
+atexit.register(_cleanup_all)
+signal.signal(signal.SIGTERM, lambda *_: exit(0))
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -85,6 +105,7 @@ def _inject(client_ip: str):
          "-j", "DNAT", "--to-destination", f"127.0.0.1:{GATEWAY_PORT}"],
         capture_output=True,
     )
+    _active_phones.add(client_ip)
     print(f"[+] RULES INJECTED  {client_ip} → tcp/{GATEWAY_PORT}")
 
 
@@ -101,6 +122,7 @@ def _remove(client_ip: str):
          "-j", "DNAT", "--to-destination", f"127.0.0.1:{GATEWAY_PORT}"],
         capture_output=True,
     )
+    _active_phones.discard(client_ip)
     print(f"[!] RULES REMOVED   {client_ip} phone session expired")
 
 
@@ -142,6 +164,7 @@ def _inject_laptop(laptop_ip: str):
         ["iptables", "-I", "FORWARD", "1", "-d", laptop_ip, "-j", "ACCEPT"],
         capture_output=True,
     )
+    _active_laptops.add(laptop_ip)
     print(f"[+] LAPTOP ACCESS   {laptop_ip} — full access granted (ping/nmap enabled)")
 
 
@@ -159,6 +182,7 @@ def _remove_laptop(laptop_ip: str):
         ["iptables", "-D", "FORWARD", "-d", laptop_ip, "-j", "ACCEPT"],
         capture_output=True,
     )
+    _active_laptops.discard(laptop_ip)
     print(f"[!] LAPTOP REMOVED  {laptop_ip} — session expired")
 
 
