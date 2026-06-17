@@ -15,6 +15,7 @@ import subprocess
 import threading
 import signal
 import atexit
+import time
 import os
 from datetime import datetime, timezone
 from contextlib import contextmanager
@@ -231,18 +232,81 @@ def _mac_to_ip(mac: str) -> str | None:
     return None
 
 
-# ── Vendor device watcher ─────────────────────────────────────────────────────
-def _watch_vendor_device(vendor_name: str, phone_ip: str, session_timeout: int):
+# ── Vendor device watcher (pending-approval flow) ─────────────────────────────
+def _store_pending_device(token_hash: str, device_ip: str, device_mac: str):
+    """Store detected device as pending in vendor_sessions for admin review."""
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE public.vendor_sessions
+                       SET pending_device_ip  = %s,
+                           pending_device_mac = %s,
+                           device_approved    = FALSE
+                       WHERE qr_token = %s""",
+                    (device_ip, device_mac, token_hash)
+                )
+    except Exception as e:
+        print(f"[-] Store pending device failed: {e}")
+
+
+def _poll_for_approval(token_hash: str, vendor_name: str,
+                       device_ip: str, session_timeout: int):
     """
-    Opens a 60-second window after a vendor knock.
-    The first NEW device (not phone, gateway, or any already-active admin/vendor
-    laptop) to send any packet is locked in as the vendor's laptop.
-    Snapshot active laptops at knock time so admin laptop is never picked up.
+    Poll DB every 3 seconds until admin approves or session expires.
+    On approval: inject FORWARD rules for the device IP.
+    """
+    deadline = time.time() + session_timeout
+
+    def _poll():
+        while time.time() < deadline:
+            time.sleep(3)
+            try:
+                with get_db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """SELECT device_approved, pending_device_ip, status
+                               FROM public.vendor_sessions
+                               WHERE qr_token = %s""",
+                            (token_hash,)
+                        )
+                        row = cur.fetchone()
+            except Exception as e:
+                print(f"[-] Approval poll DB error: {e}")
+                continue
+
+            if not row:
+                break
+
+            if row["status"] in ("expired", "revoked"):
+                print(f"[-] APPROVAL POLL  {vendor_name} — session {row['status']}")
+                break
+
+            if row["device_approved"]:
+                approved_ip = row["pending_device_ip"] or device_ip
+                remaining   = max(int(deadline - time.time()), 60)
+                _inject_laptop(approved_ip)
+                _schedule_laptop(approved_ip, remaining, vendor_name)
+                _log("VENDOR_DEVICE", vendor_name, "APPROVED", approved_ip,
+                     {"token": token_hash[:12] + "...", "remaining_seconds": remaining})
+                print(f"[+] DEVICE APPROVED {vendor_name} → {approved_ip} — full access granted ({remaining}s)")
+                break
+        else:
+            print(f"[-] APPROVAL POLL  {vendor_name} — timed out without approval")
+
+    threading.Thread(target=_poll, daemon=True).start()
+    print(f"[*] APPROVAL POLL  {vendor_name} — waiting for admin decision on {device_ip}")
+
+
+def _watch_vendor_device(vendor_name: str, phone_ip: str,
+                         session_timeout: int, token_hash: str):
+    """
+    Opens a 60-second detection window after a vendor knock.
+    The first NEW device that sends any packet is stored as pending_device
+    in the DB for admin approval. Admin approves via the app; the sniffer's
+    _poll_for_approval thread then injects FORWARD rules for that device.
     """
     registered = threading.Event()
-    # Freeze the set of already-active laptop IPs at the moment of the knock.
-    # This prevents the admin's laptop (already in _active_laptops) from being
-    # mistakenly assigned as this vendor's device.
     already_active = frozenset(_active_laptops)
 
     def _on_pkt(pkt):
@@ -250,19 +314,19 @@ def _watch_vendor_device(vendor_name: str, phone_ip: str, session_timeout: int):
             return True
         if not (IP in pkt):
             return
-        src = pkt[IP].src
-        # Ignore: phone, gateway, broadcast, multicast, already-active laptops
-        if (src == phone_ip or src == GATEWAY_IP
-                or src in already_active
-                or src.endswith(".255") or src.startswith("224.")
-                or src.startswith("239.")):
+        src_ip = pkt[IP].src
+        if (src_ip == phone_ip or src_ip == GATEWAY_IP
+                or src_ip in already_active
+                or src_ip.endswith(".255") or src_ip.startswith("224.")
+                or src_ip.startswith("239.")):
             return
+        device_mac = pkt[Ether].src if Ether in pkt else ""
         registered.set()
-        _inject_laptop(src)
-        _schedule_laptop(src, session_timeout, vendor_name)
-        _log("VENDOR_DEVICE", vendor_name, "REGISTERED", src,
-             {"session_seconds": session_timeout})
-        print(f"[+] VENDOR DEVICE   {vendor_name} → {src} locked in ({session_timeout}s)")
+        _store_pending_device(token_hash, src_ip, device_mac)
+        _log("VENDOR_DEVICE_PENDING", vendor_name, "PENDING_APPROVAL", src_ip,
+             {"mac": device_mac, "token": token_hash[:12] + "..."})
+        print(f"[*] DEVICE PENDING  {vendor_name} → {src_ip} ({device_mac}) — awaiting admin approval")
+        _poll_for_approval(token_hash, vendor_name, src_ip, session_timeout)
         return True
 
     def _run_sniff():
@@ -277,7 +341,7 @@ def _watch_vendor_device(vendor_name: str, phone_ip: str, session_timeout: int):
             print(f"[-] VENDOR WINDOW   {vendor_name} — no device detected in 60s")
 
     threading.Thread(target=_run_sniff, daemon=True).start()
-    print(f"[*] VENDOR WINDOW   {vendor_name} — 60s: vendor laptop should ping {GATEWAY_IP}")
+    print(f"[*] VENDOR WINDOW   {vendor_name} — 60s detection window open")
 
 
 # ── ECDSA verification ────────────────────────────────────────────────────────
@@ -420,7 +484,7 @@ def _vendor_knock(ip: str, d: dict):
     print(f"[+] GRANTED       {vendor_name} — {timeout}s session open")
 
     # ── Start 60-second window for vendor laptop detection ────────────────────
-    _watch_vendor_device(vendor_name, ip, timeout)
+    _watch_vendor_device(vendor_name, ip, timeout, token_hash)
 
 
 # ── Scapy packet handler ──────────────────────────────────────────────────────

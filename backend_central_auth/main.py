@@ -138,6 +138,11 @@ class VendorLocationPayload(BaseModel):
     latitude:   float
     longitude:  float
 
+class ApproveVendorDevicePayload(BaseModel):
+    token_hash:     str
+    admin_username: str
+    approved:       bool
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/")
@@ -680,6 +685,98 @@ async def update_vendor_location(payload: VendorLocationPayload):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Vendor location update failed: {e}")
     return {"status": "ok", "location": location_name}
+
+
+@app.get("/api/v1/dashboard/pending-vendor-devices")
+async def get_pending_vendor_devices():
+    """Return vendor sessions that have a detected device awaiting admin approval."""
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT qr_token, vendor_username, company_name,
+                              pending_device_ip, pending_device_mac,
+                              device_approved, valid_until
+                       FROM public.vendor_sessions
+                       WHERE pending_device_ip IS NOT NULL
+                         AND (device_approved IS NULL OR device_approved = FALSE)
+                         AND status NOT IN ('expired', 'revoked')
+                       ORDER BY created_at DESC"""
+                )
+                rows = cur.fetchall()
+        return {"pending": [dict(r) for r in rows]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+
+@app.post("/api/v1/admin/approve-vendor-device")
+async def approve_vendor_device(payload: ApproveVendorDevicePayload, request: Request):
+    """Admin approves or denies a vendor's detected device."""
+    client_ip = request.client.host
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                if payload.approved:
+                    cur.execute(
+                        """UPDATE public.vendor_sessions
+                           SET device_approved    = TRUE,
+                               device_approved_at = %s
+                           WHERE qr_token = %s""",
+                        (datetime.now(timezone.utc).isoformat(), payload.token_hash)
+                    )
+                else:
+                    # Denial: clear pending fields so vendor can try again
+                    cur.execute(
+                        """UPDATE public.vendor_sessions
+                           SET device_approved    = FALSE,
+                               pending_device_ip  = NULL,
+                               pending_device_mac = NULL
+                           WHERE qr_token = %s""",
+                        (payload.token_hash,)
+                    )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    action = "APPROVED" if payload.approved else "DENIED"
+    insert_audit("DEVICE_APPROVAL", payload.admin_username, client_ip, action,
+                 f"Device {action.lower()} for token {payload.token_hash[:12]}...")
+    print(f"[{'+'  if payload.approved else '!'}] DEVICE {action}  by {payload.admin_username}")
+    return {"status": "ok", "approved": payload.approved}
+
+
+@app.get("/api/v1/vendor/device-status")
+async def vendor_device_status(token: str):
+    """Vendor app polls this to learn if their device has been approved."""
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT status, device_approved, pending_device_ip,
+                              pending_device_mac
+                       FROM public.vendor_sessions
+                       WHERE qr_token = %s""",
+                    (token,)
+                )
+                row = cur.fetchone()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    if row["device_approved"]:
+        poll_status = "device_approved"
+    elif row["pending_device_ip"]:
+        poll_status = "pending_device_approval"
+    else:
+        poll_status = row["status"]
+
+    return {
+        "status":          poll_status,
+        "device_approved": bool(row["device_approved"]),
+        "device_ip":       row["pending_device_ip"] or "",
+        "device_mac":      row["pending_device_mac"] or "",
+    }
 
 
 @app.get("/health")

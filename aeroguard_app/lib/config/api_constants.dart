@@ -36,6 +36,14 @@ class ApiConstants {
   static const String updateVendorLocationEndpoint =
       "$centralAuthUrl/api/v1/vendor/update-location";
 
+  // ——— Vendor device approval ———
+  static const String pendingVendorDevicesEndpoint =
+      "$centralAuthUrl/api/v1/dashboard/pending-vendor-devices";
+  static const String approveVendorDeviceEndpoint =
+      "$centralAuthUrl/api/v1/admin/approve-vendor-device";
+  static const String vendorDeviceStatusEndpoint =
+      "$centralAuthUrl/api/v1/vendor/device-status";
+
   // ——— Timeouts ———
   static const int connectionTimeoutSeconds = 15;
 }

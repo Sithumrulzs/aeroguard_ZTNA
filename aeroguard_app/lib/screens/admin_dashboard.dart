@@ -8,6 +8,7 @@ import '../config/api_constants.dart';
 import '../config/transitions.dart';
 import '../services/auth_service.dart';
 import '../services/enclave_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/live_telemetry_panel.dart';
 import '../services/network_service.dart';
 import 'sign_in_page.dart';
@@ -331,6 +332,7 @@ class _OverviewTabState extends State<_OverviewTab> {
                   children: [
                     _GatewayStatusCard(),
                     const SizedBox(height: 14),
+                    const _PendingDevicePanel(),
                     GridView.count(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
@@ -345,6 +347,7 @@ class _OverviewTabState extends State<_OverviewTab> {
                           icon: Icons.person_outline_rounded,
                           names: _registeredAdminNames,
                           isLoading: _loadingStats,
+                          accentColor: const Color(0xFF00C3FF),
                         ),
                         _MetricCard(
                           label: 'ACTIVE VENDORS',
@@ -352,18 +355,23 @@ class _OverviewTabState extends State<_OverviewTab> {
                           icon: Icons.people_outline_rounded,
                           names: _vendorNames,
                           isLoading: _loadingStats,
+                          accentColor: Colors.orangeAccent,
                         ),
                         _MetricCard(
                           label: 'KNOCKS TODAY',
                           value: _totalKnocks,
                           icon: Icons.data_usage_outlined,
                           isLoading: _loadingStats,
+                          accentColor: const Color(0xFF818CF8),
                         ),
                         _MetricCard(
                           label: 'GATEWAY',
                           value: _statsError ? 'ERR' : _gatewayStatus,
                           icon: Icons.shield_outlined,
                           isLoading: _loadingStats,
+                          accentColor: _statsError
+                              ? const Color(0xFFEF4444)
+                              : const Color(0xFF10B981),
                         ),
                       ],
                     ),
@@ -479,9 +487,9 @@ class _GatewayStatusCardState extends State<_GatewayStatusCard> {
       decoration: BoxDecoration(
         color: const Color(0xFF0D1421),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: accent.withValues(alpha: 0.25)),
+        border: Border.all(color: accent.withValues(alpha: 0.40), width: 1.2),
         boxShadow: [
-          BoxShadow(color: accent.withValues(alpha: 0.06), blurRadius: 24),
+          BoxShadow(color: accent.withValues(alpha: 0.18), blurRadius: 32, spreadRadius: -2),
         ],
       ),
       child: Row(
@@ -549,6 +557,7 @@ class _MetricCard extends StatelessWidget {
   final IconData icon;
   final List<String> names;
   final bool isLoading;
+  final Color accentColor;
 
   const _MetricCard({
     required this.label,
@@ -556,6 +565,7 @@ class _MetricCard extends StatelessWidget {
     required this.icon,
     this.names = const [],
     this.isLoading = false,
+    this.accentColor = const Color(0xFF00C3FF),
   });
 
   @override
@@ -563,70 +573,100 @@ class _MetricCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D1421),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0D1B2E), Color(0xFF080F1C)],
+        ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: const Color(0xFF00C3FF).withValues(alpha: 0.07),
+          color: accentColor.withValues(alpha: 0.28),
+          width: 1,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: accentColor.withValues(alpha: 0.10),
+            blurRadius: 20,
+            spreadRadius: -2,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Icon(
-            icon,
-            color: const Color(0xFF00C3FF).withValues(alpha: 0.45),
-            size: 16,
+          // Icon badge — top-left with accent border
+          Container(
+            padding: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              color: accentColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: accentColor.withValues(alpha: 0.28),
+                width: 0.8,
+              ),
+            ),
+            child: Icon(
+              icon,
+              color: accentColor.withValues(alpha: 0.95),
+              size: 14,
+            ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (isLoading)
-                const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.5,
-                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00C3FF)),
-                  ),
-                )
-              else
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    value,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
+          const Spacer(),
+          // Fixed-height value box — key fix for consistent alignment across all cards
+          SizedBox(
+            height: 32,
+            child: isLoading
+                ? Align(
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(accentColor),
+                      ),
+                    ),
+                  )
+                : FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      value,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        height: 1.0,
+                      ),
                     ),
                   ),
-                ),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Color(0xFF475569),
-                  fontSize: 9,
-                  letterSpacing: 1.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (names.isNotEmpty && !isLoading) ...[
-                const SizedBox(height: 4),
-                Text(
-                  names.join('  ·  '),
-                  style: const TextStyle(
-                    color: Color(0xFF00C3FF),
-                    fontSize: 9,
-                    letterSpacing: 0.3,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF475569),
+              fontSize: 9,
+              letterSpacing: 1.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          // Fixed-height names row — prevents layout difference between cards
+          SizedBox(
+            height: 14,
+            child: !isLoading && names.isNotEmpty
+                ? Text(
+                    names.join('  ·  '),
+                    style: TextStyle(
+                      color: accentColor.withValues(alpha: 0.85),
+                      fontSize: 9,
+                      letterSpacing: 0.3,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),
@@ -1576,6 +1616,357 @@ class _VaultAction extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PENDING VENDOR DEVICE APPROVAL PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+class _PendingDevicePanel extends StatefulWidget {
+  const _PendingDevicePanel();
+
+  @override
+  State<_PendingDevicePanel> createState() => _PendingDevicePanelState();
+}
+
+class _PendingDevicePanelState extends State<_PendingDevicePanel> {
+  Timer? _timer;
+  List<Map<String, dynamic>> _pending = [];
+  final Set<String> _seenTokens = {};
+
+  @override
+  void initState() {
+    super.initState();
+    NotificationService.init();
+    _fetch();
+    _timer = Timer.periodic(const Duration(seconds: 4), (_) => _fetch());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetch() async {
+    try {
+      final res = await http
+          .get(Uri.parse(ApiConstants.pendingVendorDevicesEndpoint))
+          .timeout(const Duration(seconds: 8));
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final newList =
+            List<Map<String, dynamic>>.from(data['pending'] ?? []);
+        // Fire OS notification for newly detected pending devices
+        for (final device in newList) {
+          final token = device['qr_token'] as String? ?? '';
+          if (token.isNotEmpty && !_seenTokens.contains(token)) {
+            _seenTokens.add(token);
+            NotificationService.showVendorDeviceAlert(
+              vendorName: device['vendor_username'] as String? ?? '',
+              company: device['company_name'] as String? ?? '',
+              deviceIp: device['pending_device_ip'] as String? ?? '',
+              deviceMac: device['pending_device_mac'] as String? ?? '',
+            );
+          }
+        }
+        setState(() => _pending = newList);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _action(String tokenHash, bool approved) async {
+    final username = await AuthService.getUsername() ?? 'admin';
+    try {
+      await http
+          .post(
+            Uri.parse(ApiConstants.approveVendorDeviceEndpoint),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'token_hash': tokenHash,
+              'admin_username': username,
+              'approved': approved,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {}
+    await _fetch();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_pending.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _PulsingDot(color: Colors.orangeAccent),
+            const SizedBox(width: 8),
+            const Text(
+              'DEVICE APPROVAL REQUIRED',
+              style: TextStyle(
+                color: Colors.orangeAccent,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        for (final device in _pending) ...[
+          _PendingDeviceCard(
+            vendorName: device['vendor_username'] as String? ?? '—',
+            company: device['company_name'] as String? ?? '—',
+            deviceIp: device['pending_device_ip'] as String? ?? '—',
+            deviceMac: device['pending_device_mac'] as String? ?? '—',
+            tokenHash: device['qr_token'] as String? ?? '',
+            onAction: _action,
+          ),
+          const SizedBox(height: 10),
+        ],
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+}
+
+class _PendingDeviceCard extends StatefulWidget {
+  final String vendorName;
+  final String company;
+  final String deviceIp;
+  final String deviceMac;
+  final String tokenHash;
+  final Future<void> Function(String token, bool approved) onAction;
+
+  const _PendingDeviceCard({
+    required this.vendorName,
+    required this.company,
+    required this.deviceIp,
+    required this.deviceMac,
+    required this.tokenHash,
+    required this.onAction,
+  });
+
+  @override
+  State<_PendingDeviceCard> createState() => _PendingDeviceCardState();
+}
+
+class _PendingDeviceCardState extends State<_PendingDeviceCard> {
+  bool _processing = false;
+
+  Future<void> _handle(bool approved) async {
+    setState(() => _processing = true);
+    await widget.onAction(widget.tokenHash, approved);
+    if (mounted) setState(() => _processing = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1A1008), Color(0xFF0D1421)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.orangeAccent.withValues(alpha: 0.45),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.orangeAccent.withValues(alpha: 0.12),
+            blurRadius: 24,
+            spreadRadius: -2,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header: vendor info + pulsing dot
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orangeAccent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: Colors.orangeAccent.withValues(alpha: 0.3),
+                    width: 0.8,
+                  ),
+                ),
+                child: const Icon(
+                  Icons.devices_other_rounded,
+                  color: Colors.orangeAccent,
+                  size: 16,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.vendorName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      widget.company,
+                      style: const TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 11,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              _PulsingDot(color: Colors.orangeAccent),
+            ],
+          ),
+          const SizedBox(height: 14),
+          // Device info chips
+          Row(
+            children: [
+              _DeviceInfoChip(label: 'IP', value: widget.deviceIp),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _DeviceInfoChip(label: 'MAC', value: widget.deviceMac),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          // Deny / Approve buttons
+          _processing
+              ? const Center(
+                  child: SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.orangeAccent),
+                    ),
+                  ),
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => _handle(false),
+                        child: Container(
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEF4444).withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: const Color(0xFFEF4444).withValues(alpha: 0.40),
+                            ),
+                          ),
+                          child: const Center(
+                            child: Text(
+                              'DENY',
+                              style: TextStyle(
+                                color: Color(0xFFEF4444),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 2.0,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => _handle(true),
+                        child: Container(
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF10B981).withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: const Color(0xFF10B981).withValues(alpha: 0.45),
+                            ),
+                          ),
+                          child: const Center(
+                            child: Text(
+                              'APPROVE',
+                              style: TextStyle(
+                                color: Color(0xFF10B981),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 2.0,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeviceInfoChip extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _DeviceInfoChip({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D1421),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: Colors.orangeAccent.withValues(alpha: 0.18),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$label  ',
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.0,
+            ),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SHARED — PULSING DOT
 // ─────────────────────────────────────────────────────────────────────────────
 class _PulsingDot extends StatefulWidget {
@@ -1595,11 +1986,11 @@ class _PulsingDotState extends State<_PulsingDot>
   void initState() {
     super.initState();
     _ctrl = AnimationController(
-      duration: const Duration(milliseconds: 1400),
+      duration: const Duration(milliseconds: 1200),
       vsync: this,
     )..repeat(reverse: true);
     _anim = Tween<double>(
-      begin: 0.4,
+      begin: 0.55,
       end: 1.0,
     ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
   }
@@ -1615,16 +2006,16 @@ class _PulsingDotState extends State<_PulsingDot>
     return AnimatedBuilder(
       animation: _anim,
       builder: (context, child) => Container(
-        width: 8,
-        height: 8,
+        width: 9,
+        height: 9,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: widget.color.withValues(alpha: _anim.value),
           boxShadow: [
             BoxShadow(
-              color: widget.color.withValues(alpha: _anim.value * 0.5),
-              blurRadius: 8,
-              spreadRadius: 1,
+              color: widget.color.withValues(alpha: _anim.value * 0.7),
+              blurRadius: 12,
+              spreadRadius: 2,
             ),
           ],
         ),

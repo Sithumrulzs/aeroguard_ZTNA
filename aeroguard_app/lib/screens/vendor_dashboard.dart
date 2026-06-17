@@ -10,7 +10,7 @@ import '../widgets/vendor_countdown_timer.dart';
 import '../config/transitions.dart';
 import 'sign_in_page.dart';
 
-enum _VKnockStatus { idle, knocking, success, failed }
+enum _VKnockStatus { idle, knocking, success, pendingDevice, deviceApproved, failed }
 
 class VendorDashboard extends StatefulWidget {
   final String vendorName;
@@ -32,6 +32,14 @@ class VendorDashboard extends StatefulWidget {
 
 class _VendorDashboardState extends State<VendorDashboard> {
   _VKnockStatus _knockStatus = _VKnockStatus.idle;
+  Timer? _devicePollTimer;
+  String _deviceIp = '';
+
+  @override
+  void dispose() {
+    _devicePollTimer?.cancel();
+    super.dispose();
+  }
 
   int _remainingSeconds() {
     try {
@@ -94,6 +102,7 @@ class _VendorDashboardState extends State<VendorDashboard> {
 
       if (response.statusCode == 200) {
         setState(() => _knockStatus = _VKnockStatus.success);
+        _startDevicePolling();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text(
@@ -161,22 +170,54 @@ class _VendorDashboardState extends State<VendorDashboard> {
     );
   }
 
+  void _startDevicePolling() {
+    _devicePollTimer?.cancel();
+    _devicePollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      try {
+        final uri = Uri.parse(
+            '${ApiConstants.vendorDeviceStatusEndpoint}?token=${widget.token}');
+        final res = await http.get(uri).timeout(const Duration(seconds: 6));
+        if (!mounted) return;
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body) as Map<String, dynamic>;
+          if (data['device_approved'] == true) {
+            _devicePollTimer?.cancel();
+            setState(() {
+              _knockStatus = _VKnockStatus.deviceApproved;
+              _deviceIp = data['device_ip'] as String? ?? '';
+            });
+          } else if (data['status'] == 'pending_device_approval') {
+            if (_knockStatus != _VKnockStatus.pendingDevice) {
+              setState(() => _knockStatus = _VKnockStatus.pendingDevice);
+            }
+          }
+        }
+      } catch (_) {}
+    });
+  }
+
   Color get _statusColor => switch (_knockStatus) {
-    _VKnockStatus.success => const Color(0xFF10B981),
-    _VKnockStatus.failed  => const Color(0xFFEF4444),
-    _                     => Colors.orangeAccent,
+    _VKnockStatus.success        => const Color(0xFF10B981),
+    _VKnockStatus.pendingDevice  => Colors.orangeAccent,
+    _VKnockStatus.deviceApproved => const Color(0xFF10B981),
+    _VKnockStatus.failed         => const Color(0xFFEF4444),
+    _                            => Colors.orangeAccent,
   };
 
   String get _statusLabel => switch (_knockStatus) {
-    _VKnockStatus.idle     => 'TAP TO INITIATE TUNNEL',
-    _VKnockStatus.knocking => 'ESTABLISHING TUNNEL...',
-    _VKnockStatus.success  => 'TUNNEL ACTIVE',
-    _VKnockStatus.failed   => 'ACCESS DENIED',
+    _VKnockStatus.idle           => 'TAP TO INITIATE TUNNEL',
+    _VKnockStatus.knocking       => 'ESTABLISHING TUNNEL...',
+    _VKnockStatus.success        => 'TUNNEL ACTIVE — CONNECTING DEVICE...',
+    _VKnockStatus.pendingDevice  => 'AWAITING ADMIN DEVICE APPROVAL',
+    _VKnockStatus.deviceApproved => 'DEVICE APPROVED',
+    _VKnockStatus.failed         => 'ACCESS DENIED',
   };
 
   @override
   Widget build(BuildContext context) {
-    final isSuccess = _knockStatus == _VKnockStatus.success;
+    final isSuccess = _knockStatus == _VKnockStatus.success ||
+        _knockStatus == _VKnockStatus.pendingDevice ||
+        _knockStatus == _VKnockStatus.deviceApproved;
 
     return Scaffold(
       backgroundColor: const Color(0xFF050810),
@@ -321,7 +362,7 @@ class _VendorDashboardState extends State<VendorDashboard> {
                         ),
                         const SizedBox(height: 22),
                         // Post-knock: live countdown; otherwise: status label
-                        if (isSuccess)
+                        if (_knockStatus == _VKnockStatus.deviceApproved) ...[
                           VendorCountdownTimer(
                             initialSeconds: _remainingSeconds(),
                             onExpire: () {
@@ -330,8 +371,8 @@ class _VendorDashboardState extends State<VendorDashboard> {
                                     context, fadeRoute(const SignInPage()));
                               }
                             },
-                          )
-                        else
+                          ),
+                        ] else
                           AnimatedSwitcher(
                             duration: const Duration(milliseconds: 300),
                             child: Text(
@@ -362,28 +403,46 @@ class _VendorDashboardState extends State<VendorDashboard> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Container(
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 400),
                     height: 52,
                     width: double.infinity,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(14),
-                      color: const Color(0xFF10B981).withValues(alpha: 0.06),
-                      border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.35)),
+                      color: _knockStatus == _VKnockStatus.deviceApproved
+                          ? const Color(0xFF10B981).withValues(alpha: 0.08)
+                          : Colors.orangeAccent.withValues(alpha: 0.06),
+                      border: Border.all(
+                        color: _knockStatus == _VKnockStatus.deviceApproved
+                            ? const Color(0xFF10B981).withValues(alpha: 0.40)
+                            : Colors.orangeAccent.withValues(alpha: 0.35),
+                      ),
                     ),
-                    child: const Center(
+                    child: Center(
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.check_circle_outline,
-                              color: Color(0xFF10B981), size: 16),
-                          SizedBox(width: 10),
+                          Icon(
+                            _knockStatus == _VKnockStatus.deviceApproved
+                                ? Icons.check_circle_outline
+                                : Icons.pending_outlined,
+                            color: _knockStatus == _VKnockStatus.deviceApproved
+                                ? const Color(0xFF10B981)
+                                : Colors.orangeAccent,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 10),
                           Text(
-                            'TUNNEL ACTIVE',
+                            _knockStatus == _VKnockStatus.deviceApproved
+                                ? 'DEVICE CONNECTED'
+                                : 'AWAITING DEVICE APPROVAL',
                             style: TextStyle(
-                              color: Color(0xFF10B981),
-                              fontSize: 13,
+                              color: _knockStatus == _VKnockStatus.deviceApproved
+                                  ? const Color(0xFF10B981)
+                                  : Colors.orangeAccent,
+                              fontSize: 12,
                               fontWeight: FontWeight.w800,
-                              letterSpacing: 3.0,
+                              letterSpacing: 2.5,
                             ),
                           ),
                         ],
@@ -436,9 +495,10 @@ class _VendorKnockButtonState extends State<_VendorKnockButton>
   }
 
   Color get _color => switch (widget.status) {
-    _VKnockStatus.success => const Color(0xFF10B981),
-    _VKnockStatus.failed  => const Color(0xFFEF4444),
-    _                     => Colors.orangeAccent,
+    _VKnockStatus.success        => const Color(0xFF10B981),
+    _VKnockStatus.deviceApproved => const Color(0xFF10B981),
+    _VKnockStatus.failed         => const Color(0xFFEF4444),
+    _                            => Colors.orangeAccent,
   };
 
   @override
@@ -542,10 +602,12 @@ class _VendorKnockButtonState extends State<_VendorKnockButton>
                       const SizedBox(height: 7),
                       Text(
                         switch (widget.status) {
-                          _VKnockStatus.success => 'TUNNEL\nACTIVE',
-                          _VKnockStatus.failed  => 'ACCESS\nDENIED',
-                          _VKnockStatus.knocking => 'CONNECTING\n...',
-                          _VKnockStatus.idle    => 'AUTHORIZE\nTUNNEL',
+                          _VKnockStatus.success        => 'TUNNEL\nACTIVE',
+                          _VKnockStatus.pendingDevice  => 'AWAITING\nAPPROVAL',
+                          _VKnockStatus.deviceApproved => 'DEVICE\nCONNECTED',
+                          _VKnockStatus.failed         => 'ACCESS\nDENIED',
+                          _VKnockStatus.knocking       => 'CONNECTING\n...',
+                          _VKnockStatus.idle           => 'AUTHORIZE\nTUNNEL',
                         },
                         textAlign: TextAlign.center,
                         style: TextStyle(
