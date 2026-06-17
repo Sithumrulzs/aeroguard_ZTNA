@@ -235,12 +235,15 @@ def _mac_to_ip(mac: str) -> str | None:
 def _watch_vendor_device(vendor_name: str, phone_ip: str, session_timeout: int):
     """
     Opens a 60-second window after a vendor knock.
-    The first device (not the vendor phone or gateway) to send any packet
-    to this machine is locked in as the vendor's laptop for the session duration.
-    Scapy sees packets before iptables drops them, so even a single ping attempt
-    from the vendor's laptop is enough to register it.
+    The first NEW device (not phone, gateway, or any already-active admin/vendor
+    laptop) to send any packet is locked in as the vendor's laptop.
+    Snapshot active laptops at knock time so admin laptop is never picked up.
     """
     registered = threading.Event()
+    # Freeze the set of already-active laptop IPs at the moment of the knock.
+    # This prevents the admin's laptop (already in _active_laptops) from being
+    # mistakenly assigned as this vendor's device.
+    already_active = frozenset(_active_laptops)
 
     def _on_pkt(pkt):
         if registered.is_set():
@@ -248,8 +251,9 @@ def _watch_vendor_device(vendor_name: str, phone_ip: str, session_timeout: int):
         if not (IP in pkt):
             return
         src = pkt[IP].src
-        # Ignore: phone, gateway itself, broadcast, multicast
+        # Ignore: phone, gateway, broadcast, multicast, already-active laptops
         if (src == phone_ip or src == GATEWAY_IP
+                or src in already_active
                 or src.endswith(".255") or src.startswith("224.")
                 or src.startswith("239.")):
             return

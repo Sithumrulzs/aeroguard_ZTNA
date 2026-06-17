@@ -13,15 +13,7 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Step 0: Build venv if it doesn't exist (happens after every fresh unzip)
-if [ ! -f "$SCRIPT_DIR/venv/bin/python3" ]; then
-    echo "[*] Step 0 — venv not found, building..."
-    python3 -m venv "$SCRIPT_DIR/venv"
-    "$SCRIPT_DIR/venv/bin/pip" install -q -r "$SCRIPT_DIR/requirements.txt"
-    echo "[*] Step 0 — venv ready."
-fi
-
-# Step 1: Apply SPA firewall (dark mode + DNAT support)
+# Step 1: Apply SPA firewall — flush all rules and enter dark mode
 echo "[*] Step 1 — Applying SPA firewall (dark mode)..."
 bash "$SCRIPT_DIR/setup_darkmode.sh"
 
@@ -33,6 +25,9 @@ pkill -f "spa_sniffer.py" 2>/dev/null && sleep 0.5
 SNIFFER_PID=$!
 echo "    sniffer PID: $SNIFFER_PID"
 
+# Guarantee: kill sniffer (triggers atexit cleanup → dark mode restored) on any exit
+trap 'echo "[*] Stopping sniffer and restoring dark mode..."; kill "$SNIFFER_PID" 2>/dev/null; wait "$SNIFFER_PID" 2>/dev/null' EXIT
+
 # Brief pause to let the sniffer bind before the gateway starts
 sleep 1
 
@@ -42,6 +37,3 @@ echo "[*] Step 3 — Starting AeroGuard Gateway (127.0.0.1:8000)..."
 echo ""
 cd "$SCRIPT_DIR"
 "$SCRIPT_DIR/venv/bin/python3" main.py
-
-# If FastAPI exits, kill the sniffer too
-kill "$SNIFFER_PID" 2>/dev/null
