@@ -1,0 +1,18 @@
+[Unit]
+Description=AeroGuard SPA Knock Sniffer (UDP 7777)
+Documentation=https://github.com/your-org/aeroguard
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/aeroguard/backend_kali_gateway/.env
+WorkingDirectory=/opt/aeroguard/backend_kali_gateway
+ExecStartPre=/bin/bash /opt/aeroguard/backend_kali_gateway/setup_darkmode.sh
+ExecStart=/usr/bin/python3 spa_sniffer.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
